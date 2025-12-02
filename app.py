@@ -8,8 +8,9 @@ from datetime import datetime
 # --- 1. 設定頁面配置 ---
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
-# --- 2. 設定：南區醫院白名單 (請在此處增減醫院名稱) ---
+# --- 2. 設定：南區醫院白名單 ---
 # 系統只會保留下列名稱的醫院資料，其他醫院會被自動隱藏
+# 已移除 "成大斗六"，僅保留 "成大"
 VALID_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -48,13 +49,20 @@ st.markdown("""
         background-color: #FFFFFF !important;
         color: #555555 !important;
         border: 1px solid #CCCCCC !important;
+        width: 100%;
         font-weight: bold;
+        padding: 10px;
+        border-radius: 5px;
         transition: 0.2s;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
     div[data-testid="stForm"] button:hover {
         background-color: #F0F0F0 !important;
         border-color: #999999 !important;
-        color: #000000 !important;
+        color: #333333 !important;
+    }
+    div[data-testid="stForm"] button:active {
+        background-color: #E0E0E0 !important;
     }
     
     #MainMenu {visibility: hidden;}
@@ -92,6 +100,7 @@ def process_data(df):
         idx_model = find_row_index('型號')
         idx_alias = find_row_index('客戶簡稱') 
         idx_nhi_code = find_row_index('健保碼')
+        idx_permit = find_row_index('許可證')
         
         if idx_model is None:
             return None, "錯誤：找不到『型號』列。"
@@ -108,19 +117,23 @@ def process_data(df):
             # 抓取屬性
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
+            permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
+            
+            # 建立去除符號的「純淨型號」，以利模糊搜尋
+            model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
             
             # 建立搜尋字串
-            full_search_text = f"{model_val} {alias_val} {nhi_val}".lower()
+            full_search_text = f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
 
             products[col_idx] = {
                 '型號': model_val,
-                '客戶簡稱': alias_val,
+                '產品名稱': alias_val,
                 '健保碼': nhi_val,
                 '搜尋用字串': full_search_text
             }
         
         # 提取醫院資料
-        known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code] if i is not None]
+        known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
         
         processed_list = []
@@ -132,21 +145,18 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 關鍵修改：檢查醫院是否在白名單內 ===
+            # 醫院白名單過濾
             hospital_name = row_header.strip()
-            
-            # 模糊比對：只要 Excel 中的醫院名稱包含白名單中的關鍵字，就保留
-            # 例如: "成大斗六" 包含 "成大"，若白名單只有"成大"，可能會誤判。
-            # 這裡採用：若白名單有定義，則只保留名單內的醫院。
             is_valid = False
             for v_hosp in VALID_HOSPITALS:
-                # 簡單比對：如果白名單的名稱 出現在 Excel 的醫院名稱中 (或完全相等)
+                # 比對邏輯：
+                # 1. 完全相等 (例如 "成大" == "成大")
+                # 2. 包含且長度大於2 (避免 "成大" 誤配 "成大斗六")
                 if v_hosp == hospital_name or (len(v_hosp) > 2 and v_hosp in hospital_name):
                     is_valid = True
                     break
             
-            if not is_valid:
-                continue # 跳過不在名單的醫院
+            if not is_valid: continue 
 
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
@@ -159,7 +169,7 @@ def process_data(df):
                     base_item = {
                         '醫院名稱': hospital_name,
                         '型號': p_info['型號'],
-                        '客戶簡稱': p_info['客戶簡稱'],
+                        '產品名稱': p_info['產品名稱'],
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
                         '原始備註': cell_content,
@@ -176,7 +186,7 @@ def process_data(df):
                                 exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
                                 if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                     new_item['型號'] = spec_text
-                                    new_item['搜尋用字串'] += f" {spec_text.lower()}"
+                                    new_item['搜尋用字串'] += f" {spec_text.lower()} {re.sub(r'[^a-zA-Z0-9]', '', spec_text)}"
                             processed_list.append(new_item)
                     else:
                         processed_list.append(base_item)
@@ -196,10 +206,8 @@ def load_data():
 
 # --- 4. 主程式 ---
 def main():
-    # 初始化
     db_content = load_data()
     
-    # 處理舊版資料結構兼容性 (如果是舊的 DataFrame，轉為新格式)
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -219,7 +227,6 @@ def main():
     with st.sidebar:
         st.title("🔍 查詢條件")
         
-        # 顯示最後更新日期
         if st.session_state.last_updated:
             st.caption(f"📅 資料更新：{st.session_state.last_updated}")
         
@@ -275,13 +282,12 @@ def main():
                         df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
-                            # 儲存資料與更新時間
                             update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
                             save_data({'df': clean_df, 'updated_at': update_time})
                             
                             st.session_state.data = clean_df
                             st.session_state.last_updated = update_time
-                            st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含南區醫院)。")
+                            st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含白名單醫院)。")
                             st.rerun()
                         else:
                             st.error(error)
@@ -306,7 +312,11 @@ def main():
             if st.session_state.qry_key:
                 kws = st.session_state.qry_key.split()
                 for k in kws:
+                    k_clean = re.sub(r'[^a-zA-Z0-9]', '', k)
                     m_search = filtered_df['搜尋用字串'].str.contains(k, case=False, na=False)
+                    if k_clean:
+                        m_search = m_search | filtered_df['搜尋用字串'].str.contains(k_clean, case=False, na=False)
+                        
                     m_note = filtered_df['原始備註'].str.contains(k, case=False, na=False)
                     m_hosp = filtered_df['醫院名稱'].str.contains(k, case=False, na=False)
                     filtered_df = filtered_df[m_search | m_note | m_hosp]
@@ -314,7 +324,7 @@ def main():
             st.caption(f"搜尋結果：{len(filtered_df)} 筆")
             
             if not filtered_df.empty:
-                display_cols = ['醫院名稱', '客戶簡稱', '型號', '院內碼']
+                display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
                 st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True, height=700)
             else:
                 st.warning("❌ 找不到資料")
