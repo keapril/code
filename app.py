@@ -8,11 +8,10 @@ from datetime import datetime
 # --- 1. 設定頁面配置 ---
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
-# --- 2. 設定：南區醫院白名單 ---
+# --- 2. 設定：南區醫院白名單 (請在此處增減醫院名稱) ---
 # 系統只會保留下列名稱的醫院資料，其他醫院會被自動隱藏
-# 已移除 "成大斗六"，僅保留 "成大"
 VALID_HOSPITALS = [
-    "成大", "台南市立(秀傳)", 
+    "成大", "成大斗六", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
     "衛生福利部新營醫院", "衛生福利部嘉義醫院", "衛生福利部臺南醫院", "衛生福利部澎湖醫院",
     "奇美永康", "奇美佳里", "奇美柳營", 
@@ -23,7 +22,8 @@ VALID_HOSPITALS = [
     "高雄長庚", "高醫", 
     "屏東榮民總醫院", "屏東寶建", "屏基", 
     "衛生福利部屏東醫院", "衛生福利部恆春旅遊醫院", 
-    "輔英", "阮綜合", "健仁", "右昌", "東港安泰", "郭綜合"
+    "輔英", "阮綜合", "健仁", "右昌", "東港安泰", "郭綜合",
+    "中國安南"
 ]
 
 # CSS 樣式優化
@@ -127,7 +127,7 @@ def process_data(df):
 
             products[col_idx] = {
                 '型號': model_val,
-                '產品名稱': alias_val,
+                '客戶簡稱': alias_val,
                 '健保碼': nhi_val,
                 '搜尋用字串': full_search_text
             }
@@ -145,18 +145,21 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # 醫院白名單過濾
+            # === 關鍵修改：檢查醫院是否在白名單內 ===
             hospital_name = row_header.strip()
+            
+            # 模糊比對：只要 Excel 中的醫院名稱包含白名單中的關鍵字，就保留
+            # 例如: "成大斗六" 包含 "成大"，若白名單只有"成大"，可能會誤判。
+            # 這裡採用：若白名單有定義，則只保留名單內的醫院。
             is_valid = False
             for v_hosp in VALID_HOSPITALS:
-                # 比對邏輯：
-                # 1. 完全相等 (例如 "成大" == "成大")
-                # 2. 包含且長度大於2 (避免 "成大" 誤配 "成大斗六")
+                # 簡單比對：如果白名單的名稱 出現在 Excel 的醫院名稱中 (或完全相等)
                 if v_hosp == hospital_name or (len(v_hosp) > 2 and v_hosp in hospital_name):
                     is_valid = True
                     break
             
-            if not is_valid: continue 
+            if not is_valid:
+                continue # 跳過不在名單的醫院
 
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
@@ -169,7 +172,7 @@ def process_data(df):
                     base_item = {
                         '醫院名稱': hospital_name,
                         '型號': p_info['型號'],
-                        '產品名稱': p_info['產品名稱'],
+                        '客戶簡稱': p_info['客戶簡稱'],
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
                         '原始備註': cell_content,
@@ -206,8 +209,10 @@ def load_data():
 
 # --- 4. 主程式 ---
 def main():
+    # 初始化
     db_content = load_data()
     
+    # 處理舊版資料結構兼容性 (如果是舊的 DataFrame，轉為新格式)
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -227,6 +232,7 @@ def main():
     with st.sidebar:
         st.title("🔍 查詢條件")
         
+        # 顯示最後更新日期
         if st.session_state.last_updated:
             st.caption(f"📅 資料更新：{st.session_state.last_updated}")
         
@@ -282,12 +288,13 @@ def main():
                         df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
+                            # 儲存資料與更新時間
                             update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
                             save_data({'df': clean_df, 'updated_at': update_time})
                             
                             st.session_state.data = clean_df
                             st.session_state.last_updated = update_time
-                            st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含白名單醫院)。")
+                            st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含南區醫院)。")
                             st.rerun()
                         else:
                             st.error(error)
@@ -324,7 +331,7 @@ def main():
             st.caption(f"搜尋結果：{len(filtered_df)} 筆")
             
             if not filtered_df.empty:
-                display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
+                display_cols = ['醫院名稱', '客戶簡稱', '型號', '院內碼']
                 st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True, height=700)
             else:
                 st.warning("❌ 找不到資料")
