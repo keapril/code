@@ -48,7 +48,7 @@ st.markdown("""
     div[data-testid="stForm"] button {
         background-color: #FFFFFF !important;
         color: #555555 !important;
-        border: 1px solid #CCCCCC !important;
+        border: 1px solid #f8f8ff !important;
         width: 100%;
         font-weight: bold;
         padding: 10px;
@@ -371,7 +371,7 @@ def main():
                 # --- 樣式優化：對醫院名稱欄位上色 ---
                 st.dataframe(
                     filtered_df[display_cols].style.map(
-                        lambda _: 'background-color: #CCCCCC; color: black; font-weight: bold;', 
+                        lambda _: 'background-color: #f8f8ff; color: black; font-weight: bold;', 
                         subset=['醫院名稱']
                     ),
                     use_container_width=True, 
@@ -387,3 +387,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
