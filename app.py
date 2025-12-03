@@ -4,13 +4,14 @@ import re
 import os
 import pickle
 from datetime import datetime
+import time
 
 # --- 1. 設定頁面配置 ---
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
 # --- 2. 設定：南區醫院白名單 ---
 VALID_HOSPITALS = [
-    "成大", "成大斗六", "台南市立(秀傳)", 
+    "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
     "衛生福利部新營醫院", "衛生福利部嘉義醫院", "衛生福利部臺南醫院", "衛生福利部澎湖醫院",
     "奇美永康", "奇美佳里", "奇美柳營", 
@@ -25,18 +26,25 @@ VALID_HOSPITALS = [
     "中國安南"
 ]
 
-# CSS 樣式優化 (強制淺色無印風)
+# CSS 樣式優化
 st.markdown("""
     <style>
+    /* 全局淺色設定 */
     [data-testid="stAppViewContainer"] { background-color: #F5F7F9 !important; color: #2C3E50 !important; }
     [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     h1, h2, h3, h4, h5, h6, p, span, label, div { color: #2C3E50 !important; font-family: sans-serif; }
-    .stTextInput input, .stMultiSelect div[data-baseweb="select"] > div {
+    
+    /* 輸入框與選單 */
+    .stTextInput input, .stMultiSelect div[data-baseweb="select"] > div, .stSelectbox div[data-baseweb="select"] > div {
         background-color: #FFFFFF !important;
         border: 1px solid #D0D0D0 !important;
         color: #2C3E50 !important;
     }
+    
+    /* 表格 */
     .stDataFrame { background-color: #FFFFFF !important; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    
+    /* 按鈕樣式 (白底灰字) */
     div[data-testid="stForm"] button {
         background-color: #FFFFFF !important;
         color: #555555 !important;
@@ -53,6 +61,10 @@ st.markdown("""
         border-color: #999999 !important;
         color: #333333 !important;
     }
+    div[data-testid="stForm"] button:active {
+        background-color: #E0E0E0 !important;
+    }
+    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -68,16 +80,15 @@ def process_data(df):
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
         df = df.astype(str).apply(lambda x: x.str.strip())
         
-        # 自動偵測標題欄 (找 '型號')
+        # 自動偵測標題列 (找 '型號')
         header_col_idx = -1
         for c in range(min(10, df.shape[1])):
-            # 使用精確比對或極短字串包含，避免抓到長篇備註
-            if df.iloc[:, c].apply(lambda x: x == '型號' or (len(x) < 5 and '型號' in x)).any():
+            col_data = df.iloc[:, c]
+            if col_data.apply(lambda x: x == '型號' or (len(x) < 5 and '型號' in x)).any():
                 header_col_idx = c
                 break
         
         if header_col_idx == -1:
-            # 若找不到，放寬條件再找一次
             for c in range(min(10, df.shape[1])):
                 if df.iloc[:, c].str.contains('型號', na=False).any():
                     header_col_idx = c
@@ -88,19 +99,13 @@ def process_data(df):
 
         header_col_data = df.iloc[:, header_col_idx]
 
-        # 改良版：優先找「完全相等」的列，避免抓到備註文字
         def find_row_index(keyword):
-            # 1. 優先找完全一樣的 (例如 "型號")
             matches_exact = header_col_data[header_col_data == keyword]
-            if not matches_exact.empty:
-                return matches_exact.index[0]
+            if not matches_exact.empty: return matches_exact.index[0]
             
-            # 2. 其次找去除空白後一樣的
             matches_nospace = header_col_data[header_col_data.str.replace(' ', '') == keyword]
-            if not matches_nospace.empty:
-                return matches_nospace.index[0]
+            if not matches_nospace.empty: return matches_nospace.index[0]
                 
-            # 3. 最後才用包含 (但限制長度，避免抓到長句子)
             matches_contains = header_col_data[
                 header_col_data.str.contains(keyword, na=False, case=False) & 
                 (header_col_data.str.len() < 15)
@@ -110,35 +115,28 @@ def process_data(df):
         # 抓取關鍵列
         idx_model = find_row_index('型號')
         idx_alias = find_row_index('客戶簡稱') 
-        idx_nhi_code = find_row_index('健保碼') # 可能會是 '健保碼(自費碼)'
+        idx_nhi_code = find_row_index('健保碼')
         if idx_nhi_code is None: idx_nhi_code = find_row_index('自費碼')
-        
         idx_permit = find_row_index('許可證')
         
         if idx_model is None:
             return None, "錯誤：找不到『型號』列。"
 
-        # 建構產品清單
         products = {}
         total_cols = df.shape[1]
         
         for col_idx in range(header_col_idx + 1, total_cols):
             model_val = df.iloc[idx_model, col_idx]
             
-            # 過濾無效的型號 (空白、nan、或是中文經銷商名字誤入)
-            # 這裡增加檢查：如果型號包含 "祐新" 或 "銀鐸" 或長度過長，視為無效
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val):
                 continue
             
-            # 抓取屬性
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
             
-            # 建立去除符號的「純淨型號」
             model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
-            
             full_search_text = f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
 
             products[col_idx] = {
@@ -148,7 +146,6 @@ def process_data(df):
                 '搜尋用字串': full_search_text
             }
         
-        # 提取醫院資料
         known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
         
@@ -161,7 +158,6 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # 醫院白名單過濾
             hospital_name = row_header.strip()
             is_valid = False
             for v_hosp in VALID_HOSPITALS:
@@ -174,7 +170,6 @@ def process_data(df):
                 cell_content = str(row.iloc[col_idx])
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
-                    # 智慧拆分邏輯
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
                     matches = re.findall(pattern, cell_content)
                     
@@ -211,14 +206,20 @@ def process_data(df):
 def save_data(data_dict):
     with open(DB_FILE, 'wb') as f: pickle.dump(data_dict, f)
 
-def load_data():
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_data_cached(mtime):
     if os.path.exists(DB_FILE):
         with open(DB_FILE, 'rb') as f: return pickle.load(f)
     return None
 
+def get_data():
+    if os.path.exists(DB_FILE):
+        return load_data_cached(os.path.getmtime(DB_FILE))
+    return None
+
 # --- 4. 主程式 ---
 def main():
-    db_content = load_data()
+    db_content = get_data()
     
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
@@ -234,6 +235,9 @@ def main():
     if 'qry_hosp' not in st.session_state: st.session_state.qry_hosp = []
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
+    
+    # 狀態變數：切換單選/多選模式 (預設為單選)
+    if 'select_mode' not in st.session_state: st.session_state.select_mode = "single"
 
     # --- 側邊欄 ---
     with st.sidebar:
@@ -246,9 +250,29 @@ def main():
             df = st.session_state.data
             hosp_list = sorted(df['醫院名稱'].unique().tolist())
             
+            # 模式切換按鈕 (使用 Radio 或 Toggle)
+            mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
+            
             with st.form("search_form"):
-                s_hosp = st.multiselect("🏥 選擇醫院", options=hosp_list, default=st.session_state.qry_hosp)
+                # 1. 醫院選擇器
+                if "單選" in mode:
+                    # 增加一個空選項，方便重置
+                    hosp_options = ["(全部)"] + hosp_list
+                    # 嘗試還原上次的單選值，如果沒有或不在清單中則預設全部
+                    default_idx = 0
+                    if st.session_state.qry_hosp and len(st.session_state.qry_hosp) == 1:
+                        if st.session_state.qry_hosp[0] in hosp_options:
+                            default_idx = hosp_options.index(st.session_state.qry_hosp[0])
+                    
+                    s_hosp_single = st.selectbox("🏥 選擇醫院", options=hosp_options, index=default_idx)
+                    s_hosp = [s_hosp_single] if s_hosp_single != "(全部)" else []
+                else:
+                    s_hosp = st.multiselect("🏥 選擇醫院", options=hosp_list, default=st.session_state.qry_hosp)
+                
+                # 2. 院內碼
                 s_code = st.text_input("🔢 院內碼", value=st.session_state.qry_code)
+                
+                # 3. 關鍵字
                 s_key = st.text_input("🔎 關鍵字 (型號/產品名)", value=st.session_state.qry_key)
                 
                 st.markdown("---")
@@ -276,33 +300,40 @@ def main():
             st.info("系統無資料")
 
         st.markdown("---")
-        with st.expander("⚙️ 後台資料更新"):
-            if st.button("🗑️ 清除舊資料庫 (重置)"):
-                if os.path.exists(DB_FILE):
-                    os.remove(DB_FILE)
-                    st.session_state.data = None
-                    st.session_state.last_updated = ""
-                    st.session_state.has_searched = False
-                    st.success("資料庫已清除，請重新上傳。")
-                    st.rerun()
+        
+        show_admin = st.checkbox("我是管理員")
+        if show_admin:
+            with st.expander("⚙️ 後台資料更新", expanded=True):
+                if st.button("🗑️ 清除舊資料庫 (重置)"):
+                    if os.path.exists(DB_FILE):
+                        os.remove(DB_FILE)
+                        load_data_cached.clear()
+                        st.session_state.data = None
+                        st.session_state.last_updated = ""
+                        st.session_state.has_searched = False
+                        st.success("已清除，請重新上傳。")
+                        time.sleep(1)
+                        st.rerun()
 
-            password = st.text_input("管理密碼", type="password")
-            if password == "admin123":
-                uploaded_file = st.file_uploader("上傳 Excel", type=['xlsx'])
-                if uploaded_file:
-                    with st.spinner('處理中...'):
-                        df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
-                        clean_df, error = process_data(df_raw)
-                        if clean_df is not None:
-                            update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            save_data({'df': clean_df, 'updated_at': update_time})
-                            
-                            st.session_state.data = clean_df
-                            st.session_state.last_updated = update_time
-                            st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含南區醫院)。")
-                            st.rerun()
-                        else:
-                            st.error(error)
+                password = st.text_input("管理密碼", type="password")
+                if password == "admin123":
+                    uploaded_file = st.file_uploader("上傳 Excel", type=['xlsx'])
+                    if uploaded_file:
+                        with st.spinner('處理中...'):
+                            df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
+                            clean_df, error = process_data(df_raw)
+                            if clean_df is not None:
+                                update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
+                                save_data({'df': clean_df, 'updated_at': update_time})
+                                load_data_cached.clear()
+                                
+                                st.session_state.data = clean_df
+                                st.session_state.last_updated = update_time
+                                st.success(f"成功！匯入 {len(clean_df)} 筆 (僅含白名單醫院)。")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(error)
 
     # --- 主畫面 ---
     st.header("醫療產品資料庫")
@@ -328,7 +359,6 @@ def main():
                     m_search = filtered_df['搜尋用字串'].str.contains(k, case=False, na=False)
                     if k_clean:
                         m_search = m_search | filtered_df['搜尋用字串'].str.contains(k_clean, case=False, na=False)
-                        
                     m_note = filtered_df['原始備註'].str.contains(k, case=False, na=False)
                     m_hosp = filtered_df['醫院名稱'].str.contains(k, case=False, na=False)
                     filtered_df = filtered_df[m_search | m_note | m_hosp]
@@ -337,7 +367,17 @@ def main():
             
             if not filtered_df.empty:
                 display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
-                st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True, height=700)
+                
+                # --- 樣式優化：對醫院名稱欄位上色 ---
+                st.dataframe(
+                    filtered_df[display_cols].style.map(
+                        lambda _: 'background-color: #CCCCCC; color: black; font-weight: bold;', 
+                        subset=['醫院名稱']
+                    ),
+                    use_container_width=True, 
+                    hide_index=True, 
+                    height=700
+                )
             else:
                 st.warning("❌ 找不到資料")
         else:
