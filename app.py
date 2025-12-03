@@ -48,7 +48,7 @@ st.markdown("""
     div[data-testid="stForm"] button {
         background-color: #FFFFFF !important;
         color: #555555 !important;
-        border: 1px solid #f8f8ff !important;
+        border: 1px solid #CCCCCC !important;
         width: 100%;
         font-weight: bold;
         padding: 10px;
@@ -188,12 +188,17 @@ def process_data(df):
                             new_item = base_item.copy()
                             new_item['院內碼'] = code_raw.replace('#', '').strip()
                             
+                            # === 智慧型號判斷邏輯更新 ===
                             if spec_text:
                                 spec_text = spec_text.strip()
-                                exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
+                                # 排除關鍵字：除了原有的，增加經銷商名稱，避免誤判
+                                exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新']
+                                
+                                # 邏輯：不包含排除字 且 長度合理 且 不包含"祐新/銀鐸"
                                 if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                     new_item['型號'] = spec_text
                                     new_item['搜尋用字串'] += f" {spec_text.lower()} {re.sub(r'[^a-zA-Z0-9]', '', spec_text)}"
+                            
                             processed_list.append(new_item)
                     else:
                         processed_list.append(base_item)
@@ -236,7 +241,6 @@ def main():
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     
-    # 狀態變數：切換單選/多選模式 (預設為單選)
     if 'select_mode' not in st.session_state: st.session_state.select_mode = "single"
 
     # --- 側邊欄 ---
@@ -250,15 +254,11 @@ def main():
             df = st.session_state.data
             hosp_list = sorted(df['醫院名稱'].unique().tolist())
             
-            # 模式切換按鈕 (使用 Radio 或 Toggle)
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
             
             with st.form("search_form"):
-                # 1. 醫院選擇器
                 if "單選" in mode:
-                    # 增加一個空選項，方便重置
                     hosp_options = ["(全部)"] + hosp_list
-                    # 嘗試還原上次的單選值，如果沒有或不在清單中則預設全部
                     default_idx = 0
                     if st.session_state.qry_hosp and len(st.session_state.qry_hosp) == 1:
                         if st.session_state.qry_hosp[0] in hosp_options:
@@ -269,10 +269,7 @@ def main():
                 else:
                     s_hosp = st.multiselect("🏥 選擇醫院", options=hosp_list, default=st.session_state.qry_hosp)
                 
-                # 2. 院內碼
                 s_code = st.text_input("🔢 院內碼", value=st.session_state.qry_code)
-                
-                # 3. 關鍵字
                 s_key = st.text_input("🔎 關鍵字 (型號/產品名)", value=st.session_state.qry_key)
                 
                 st.markdown("---")
@@ -368,7 +365,7 @@ def main():
             if not filtered_df.empty:
                 display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
                 
-                # --- 樣式優化：對醫院名稱欄位上色 ---
+                # --- 樣式優化：對醫院名稱欄位上色 (改為 #f8f8ff) ---
                 st.dataframe(
                     filtered_df[display_cols].style.map(
                         lambda _: 'background-color: #f8f8ff; color: black; font-weight: bold;', 
@@ -387,4 +384,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
