@@ -8,8 +8,7 @@ from datetime import datetime
 # --- 1. 設定頁面配置 ---
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
-# --- 2. 設定：南區醫院白名單 (請在此處增減醫院名稱) ---
-# 系統只會保留下列名稱的醫院資料，其他醫院會被自動隱藏
+# --- 2. 設定：南區醫院白名單 ---
 VALID_HOSPITALS = [
     "成大", "成大斗六", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -26,25 +25,18 @@ VALID_HOSPITALS = [
     "中國安南"
 ]
 
-# CSS 樣式優化
+# CSS 樣式優化 (強制淺色無印風)
 st.markdown("""
     <style>
-    /* 全局淺色設定 */
     [data-testid="stAppViewContainer"] { background-color: #F5F7F9 !important; color: #2C3E50 !important; }
     [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     h1, h2, h3, h4, h5, h6, p, span, label, div { color: #2C3E50 !important; font-family: sans-serif; }
-    
-    /* 輸入框與選單 */
     .stTextInput input, .stMultiSelect div[data-baseweb="select"] > div {
         background-color: #FFFFFF !important;
         border: 1px solid #D0D0D0 !important;
         color: #2C3E50 !important;
     }
-    
-    /* 表格 */
     .stDataFrame { background-color: #FFFFFF !important; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    
-    /* 按鈕樣式 (白底灰字) */
     div[data-testid="stForm"] button {
         background-color: #FFFFFF !important;
         color: #555555 !important;
@@ -61,10 +53,6 @@ st.markdown("""
         border-color: #999999 !important;
         color: #333333 !important;
     }
-    div[data-testid="stForm"] button:active {
-        background-color: #E0E0E0 !important;
-    }
-    
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     </style>
@@ -80,26 +68,51 @@ def process_data(df):
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
         df = df.astype(str).apply(lambda x: x.str.strip())
         
-        # 自動偵測標題列 (找 '型號')
+        # 自動偵測標題欄 (找 '型號')
         header_col_idx = -1
         for c in range(min(10, df.shape[1])):
-            if df.iloc[:, c].str.replace(' ', '').str.contains('型號', na=False).any():
+            # 使用精確比對或極短字串包含，避免抓到長篇備註
+            if df.iloc[:, c].apply(lambda x: x == '型號' or (len(x) < 5 and '型號' in x)).any():
                 header_col_idx = c
                 break
+        
+        if header_col_idx == -1:
+            # 若找不到，放寬條件再找一次
+            for c in range(min(10, df.shape[1])):
+                if df.iloc[:, c].str.contains('型號', na=False).any():
+                    header_col_idx = c
+                    break
         
         if header_col_idx == -1:
             return None, "錯誤：無法偵測標題欄 (找不到『型號』)。"
 
         header_col_data = df.iloc[:, header_col_idx]
 
+        # 改良版：優先找「完全相等」的列，避免抓到備註文字
         def find_row_index(keyword):
-            matches = header_col_data[header_col_data.str.replace(' ', '').str.contains(keyword, na=False, case=False)]
-            return matches.index[0] if not matches.empty else None
+            # 1. 優先找完全一樣的 (例如 "型號")
+            matches_exact = header_col_data[header_col_data == keyword]
+            if not matches_exact.empty:
+                return matches_exact.index[0]
+            
+            # 2. 其次找去除空白後一樣的
+            matches_nospace = header_col_data[header_col_data.str.replace(' ', '') == keyword]
+            if not matches_nospace.empty:
+                return matches_nospace.index[0]
+                
+            # 3. 最後才用包含 (但限制長度，避免抓到長句子)
+            matches_contains = header_col_data[
+                header_col_data.str.contains(keyword, na=False, case=False) & 
+                (header_col_data.str.len() < 15)
+            ]
+            return matches_contains.index[0] if not matches_contains.empty else None
 
         # 抓取關鍵列
         idx_model = find_row_index('型號')
         idx_alias = find_row_index('客戶簡稱') 
-        idx_nhi_code = find_row_index('健保碼')
+        idx_nhi_code = find_row_index('健保碼') # 可能會是 '健保碼(自費碼)'
+        if idx_nhi_code is None: idx_nhi_code = find_row_index('自費碼')
+        
         idx_permit = find_row_index('許可證')
         
         if idx_model is None:
@@ -111,7 +124,11 @@ def process_data(df):
         
         for col_idx in range(header_col_idx + 1, total_cols):
             model_val = df.iloc[idx_model, col_idx]
-            if model_val == '' or model_val.lower() == 'nan':
+            
+            # 過濾無效的型號 (空白、nan、或是中文經銷商名字誤入)
+            # 這裡增加檢查：如果型號包含 "祐新" 或 "銀鐸" 或長度過長，視為無效
+            if (model_val == '' or model_val.lower() == 'nan' or 
+                '祐新' in model_val or '銀鐸' in model_val):
                 continue
             
             # 抓取屬性
@@ -119,15 +136,14 @@ def process_data(df):
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
             
-            # 建立去除符號的「純淨型號」，以利模糊搜尋
+            # 建立去除符號的「純淨型號」
             model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
             
-            # 建立搜尋字串
             full_search_text = f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
 
             products[col_idx] = {
                 '型號': model_val,
-                '客戶簡稱': alias_val,
+                '產品名稱': alias_val,
                 '健保碼': nhi_val,
                 '搜尋用字串': full_search_text
             }
@@ -145,21 +161,14 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 關鍵修改：檢查醫院是否在白名單內 ===
+            # 醫院白名單過濾
             hospital_name = row_header.strip()
-            
-            # 模糊比對：只要 Excel 中的醫院名稱包含白名單中的關鍵字，就保留
-            # 例如: "成大斗六" 包含 "成大"，若白名單只有"成大"，可能會誤判。
-            # 這裡採用：若白名單有定義，則只保留名單內的醫院。
             is_valid = False
             for v_hosp in VALID_HOSPITALS:
-                # 簡單比對：如果白名單的名稱 出現在 Excel 的醫院名稱中 (或完全相等)
                 if v_hosp == hospital_name or (len(v_hosp) > 2 and v_hosp in hospital_name):
                     is_valid = True
                     break
-            
-            if not is_valid:
-                continue # 跳過不在名單的醫院
+            if not is_valid: continue 
 
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
@@ -172,7 +181,7 @@ def process_data(df):
                     base_item = {
                         '醫院名稱': hospital_name,
                         '型號': p_info['型號'],
-                        '客戶簡稱': p_info['客戶簡稱'],
+                        '產品名稱': p_info['產品名稱'],
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
                         '原始備註': cell_content,
@@ -209,10 +218,8 @@ def load_data():
 
 # --- 4. 主程式 ---
 def main():
-    # 初始化
     db_content = load_data()
     
-    # 處理舊版資料結構兼容性 (如果是舊的 DataFrame，轉為新格式)
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -232,7 +239,6 @@ def main():
     with st.sidebar:
         st.title("🔍 查詢條件")
         
-        # 顯示最後更新日期
         if st.session_state.last_updated:
             st.caption(f"📅 資料更新：{st.session_state.last_updated}")
         
@@ -288,7 +294,6 @@ def main():
                         df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
-                            # 儲存資料與更新時間
                             update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
                             save_data({'df': clean_df, 'updated_at': update_time})
                             
@@ -331,7 +336,7 @@ def main():
             st.caption(f"搜尋結果：{len(filtered_df)} 筆")
             
             if not filtered_df.empty:
-                display_cols = ['醫院名稱', '客戶簡稱', '型號', '院內碼']
+                display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
                 st.dataframe(filtered_df[display_cols], use_container_width=True, hide_index=True, height=700)
             else:
                 st.warning("❌ 找不到資料")
