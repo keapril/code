@@ -100,12 +100,13 @@ def process_data(df):
         header_col_data = df.iloc[:, header_col_idx]
 
         def find_row_index(keyword):
+            # 1. 優先找完全相等
             matches_exact = header_col_data[header_col_data == keyword]
             if not matches_exact.empty: return matches_exact.index[0]
-            
+            # 2. 找去除空白後相等
             matches_nospace = header_col_data[header_col_data.str.replace(' ', '') == keyword]
             if not matches_nospace.empty: return matches_nospace.index[0]
-                
+            # 3. 包含且長度短
             matches_contains = header_col_data[
                 header_col_data.str.contains(keyword, na=False, case=False) & 
                 (header_col_data.str.len() < 15)
@@ -128,6 +129,7 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, total_cols):
             model_val = df.iloc[idx_model, col_idx]
             
+            # 過濾無效的型號
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val):
                 continue
@@ -158,6 +160,7 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
+            # 醫院白名單過濾
             hospital_name = row_header.strip()
             is_valid = False
             for v_hosp in VALID_HOSPITALS:
@@ -170,13 +173,14 @@ def process_data(df):
                 cell_content = str(row.iloc[col_idx])
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
-                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
+                    # 規則調整：只單純抓取代碼 #Code，不修改型號
+                    pattern = r'#\s*([A-Za-z0-9\-\.\_]+)'
                     matches = re.findall(pattern, cell_content)
                     
                     base_item = {
                         '醫院名稱': hospital_name,
-                        '型號': p_info['型號'],
-                        '產品名稱': p_info['產品名稱'],
+                        '型號': p_info['型號'],      # 固定使用上方標題列的型號
+                        '產品名稱': p_info['產品名稱'], # 固定使用上方標題列的名稱
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
                         '原始備註': cell_content,
@@ -184,23 +188,14 @@ def process_data(df):
                     }
                     
                     if matches:
-                        for code_raw, spec_text in matches:
+                        # 如果有多個代碼，拆分成多筆，但型號與產品名稱保持不變
+                        for code in matches:
                             new_item = base_item.copy()
-                            new_item['院內碼'] = code_raw.replace('#', '').strip()
-                            
-                            # === 智慧型號判斷邏輯更新 ===
-                            if spec_text:
-                                spec_text = spec_text.strip()
-                                # 排除關鍵字：除了原有的，增加經銷商名稱，避免誤判
-                                exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新']
-                                
-                                # 邏輯：不包含排除字 且 長度合理 且 不包含"祐新/銀鐸"
-                                if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
-                                    new_item['型號'] = spec_text
-                                    new_item['搜尋用字串'] += f" {spec_text.lower()} {re.sub(r'[^a-zA-Z0-9]', '', spec_text)}"
-                            
+                            new_item['院內碼'] = code.strip()
+                            # 這裡不再嘗試從備註解析型號，確保資料純淨
                             processed_list.append(new_item)
                     else:
+                        # 沒抓到 #碼 也要保留顯示
                         processed_list.append(base_item)
 
         return pd.DataFrame(processed_list), None
