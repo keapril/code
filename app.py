@@ -11,7 +11,7 @@ st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_ic
 
 # --- 2. 設定：醫院白名單設定 ---
 
-# A. 公開顯示 (南區醫院) - 預設只顯示這些
+# A. 公開顯示 (南區醫院)
 PUBLIC_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -28,35 +28,38 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
-# B. 噥噥專用 (特定醫院) - 輸入密碼後才顯示
-# 新增：明確列出 "國立陽明大學" 全名，確保不會漏抓
+# B. 噥噥專用 (特定醫院)
+# 修正：加入 "陽明" 短關鍵字，確保能抓到各種寫法的陽明大學
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
- "國立陽明大學", "國立陽明交通大學附設醫院",
+    "國立陽明", "陽明交通", "陽明", # 增加短關鍵字
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
-# CSS 樣式優化 (白底灰字按鈕)
+# CSS 樣式優化
 st.markdown("""
     <style>
+    /* 全局淺色設定 */
     [data-testid="stAppViewContainer"] { background-color: #F5F7F9 !important; color: #2C3E50 !important; }
     [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     h1, h2, h3, h4, h5, h6, p, span, label, div { color: #2C3E50 !important; font-family: sans-serif; }
     
+    /* 輸入框與選單 */
     .stTextInput input, .stMultiSelect div[data-baseweb="select"] > div, .stSelectbox div[data-baseweb="select"] > div {
         background-color: #FFFFFF !important;
         border: 1px solid #D0D0D0 !important;
         color: #2C3E50 !important;
     }
     
+    /* 表格 */
     .stDataFrame { background-color: #FFFFFF !important; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     
-    /* 按鈕樣式：白底灰字 */
+    /* 按鈕樣式 (白底灰字) */
     div[data-testid="stForm"] button {
         background-color: #FFFFFF !important;
         color: #555555 !important;
@@ -72,9 +75,6 @@ st.markdown("""
         background-color: #F0F0F0 !important;
         border-color: #999999 !important;
         color: #333333 !important;
-    }
-    div[data-testid="stForm"] button:active {
-        background-color: #E0E0E0 !important;
     }
     
     #MainMenu {visibility: hidden;}
@@ -166,19 +166,15 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 (優化比對邏輯) ===
+            # === 醫院白名單過濾 ===
             hospital_name = row_header.strip()
-            # 為了比對準確，建立一個去除空白的暫存名稱
-            hospital_name_clean = hospital_name.replace(' ', '')
-            
             is_valid = False
+            
             for v_hosp in ALL_VALID_HOSPITALS:
-                v_hosp_clean = v_hosp.replace(' ', '')
-                # 邏輯：只要 Excel 名稱包含白名單關鍵字 (且長度>1) 或 完全相等
-                if v_hosp_clean == hospital_name_clean:
+                if v_hosp == hospital_name:
                     is_valid = True
                     break
-                if len(v_hosp_clean) > 1 and v_hosp_clean in hospital_name_clean:
+                if len(v_hosp) > 1 and v_hosp in hospital_name:
                     is_valid = True
                     break
             
@@ -188,32 +184,55 @@ def process_data(df):
                 cell_content = str(row.iloc[col_idx])
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
-                    # 抓取院內碼 #Code
-                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
-                    matches = re.findall(pattern, cell_content)
+                    
+                    # 抓取所有 #Code
+                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
+                    all_matches = re.findall(pattern, cell_content)
                     
                     base_item = {
                         '醫院名稱': hospital_name,
-                        '型號': p_info['型號'],      # 固定使用上方標題列的型號
-                        '產品名稱': p_info['產品名稱'], # 固定使用上方標題列的名稱
+                        '型號': p_info['型號'],
+                        '產品名稱': p_info['產品名稱'],
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
+                        '批價碼': "", # 新增欄位
                         '原始備註': cell_content,
                         '搜尋用字串': p_info['搜尋用字串']
                     }
                     
-                    if matches:
-                        for code_raw, spec_text in matches:
-                            new_item = base_item.copy()
-                            new_item['院內碼'] = code_raw.replace('#', '').strip()
+                    if all_matches:
+                        # === 特殊邏輯：台南市立(秀傳) ===
+                        if "台南市立" in hospital_name or "秀傳" in hospital_name:
+                            hosp_codes = [] # 院內碼 (B開頭)
+                            bill_codes = [] # 批價碼 (其他)
                             
-                            # 這裡僅將括號內的字加入搜尋索引 (方便搜尋找到)，但不改變介面上顯示的固定型號
-                            if spec_text:
-                                new_item['搜尋用字串'] += f" {spec_text.lower()}"
+                            for code in all_matches:
+                                clean_code = code.replace('#', '').strip()
+                                if clean_code.upper().startswith('B'):
+                                    hosp_codes.append(clean_code)
+                                else:
+                                    bill_codes.append(clean_code)
+                            
+                            # 如果同時有院內碼和批價碼，合併在同一筆
+                            new_item = base_item.copy()
+                            new_item['院內碼'] = ", ".join(hosp_codes) if hosp_codes else ""
+                            new_item['批價碼'] = ", ".join(bill_codes) if bill_codes else ""
+                            
+                            # 只有當至少有一種碼時才加入
+                            if new_item['院內碼'] or new_item['批價碼']:
+                                processed_list.append(new_item)
+                            else:
+                                # 理論上不會發生，因為 all_matches 有值
+                                processed_list.append(base_item)
                                 
-                            processed_list.append(new_item)
+                        else:
+                            # === 一般醫院邏輯：多個碼拆分多筆 ===
+                            for code in all_matches:
+                                new_item = base_item.copy()
+                                new_item['院內碼'] = code.replace('#', '').strip()
+                                processed_list.append(new_item)
                     else:
-                        # 沒抓到 #碼 也要保留顯示 (可能只有價格或備註)
+                        # 沒抓到 #碼 也要保留顯示
                         processed_list.append(base_item)
 
         return pd.DataFrame(processed_list), None
@@ -238,10 +257,8 @@ def get_data():
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
-        h_clean = h.replace(' ', '') # 清除空格比對
         for allow in allow_list:
-            allow_clean = allow.replace(' ', '')
-            if allow_clean == h_clean or (len(allow_clean) > 1 and allow_clean in h_clean):
+            if allow == h or (len(allow) > 1 and allow in h):
                 filtered.append(h)
                 break
     return sorted(list(set(filtered)))
@@ -297,12 +314,9 @@ def main():
             df = st.session_state.data
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             
-            # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
-                # 噥噥模式：只顯示 MANAGER_HOSPITALS (隱藏南區)
                 display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 一般模式：只顯示 PUBLIC_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -391,27 +405,25 @@ def main():
             df = st.session_state.data
             filtered_df = df.copy()
 
-            # 0. 權限預先過濾
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             if st.session_state.is_manager_mode:
                 allowed_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
                 allowed_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
-            
+                
             filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed_list)]
 
-            # 1. 醫院篩選
             if st.session_state.qry_hosp:
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(st.session_state.qry_hosp)]
             
-            # 2. 院內碼篩選
             if st.session_state.qry_code:
                 k = st.session_state.qry_code.strip()
+                # 院內碼、批價碼、備註 都要搜
                 m1 = filtered_df['院內碼'].str.contains(k, case=False, na=False)
-                m2 = filtered_df['原始備註'].str.contains(k, case=False, na=False)
-                filtered_df = filtered_df[m1 | m2]
+                m2 = filtered_df['批價碼'].str.contains(k, case=False, na=False)
+                m3 = filtered_df['原始備註'].str.contains(k, case=False, na=False)
+                filtered_df = filtered_df[m1 | m2 | m3]
             
-            # 3. 關鍵字篩選
             if st.session_state.qry_key:
                 kws = st.session_state.qry_key.split()
                 for k in kws:
@@ -426,7 +438,8 @@ def main():
             st.caption(f"搜尋結果：{len(filtered_df)} 筆")
             
             if not filtered_df.empty:
-                display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼']
+                # 顯示欄位：增加 '批價碼'
+                display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼', '批價碼']
                 st.dataframe(
                     filtered_df[display_cols].style.map(
                         lambda _: 'background-color: #f8f8ff; color: black; font-weight: bold;', 
@@ -445,4 +458,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
