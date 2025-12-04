@@ -29,12 +29,12 @@ PUBLIC_HOSPITALS = [
 ]
 
 # B. 噥噥專用 (特定醫院)
-# 修正：加入 "陽明" 短關鍵字，確保能抓到各種寫法的陽明大學
+# 修正：移除模糊的 "陽明"，改用精確的 "國立陽明"
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明", "陽明交通", "陽明", # 增加短關鍵字
+    "國立陽明", "陽明交通", # 修正這裡
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
@@ -195,7 +195,7 @@ def process_data(df):
                         '產品名稱': p_info['產品名稱'],
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
-                        '批價碼': "", # 新增欄位
+                        '批價碼': "", 
                         '原始備註': cell_content,
                         '搜尋用字串': p_info['搜尋用字串']
                     }
@@ -205,24 +205,32 @@ def process_data(df):
                         if "台南市立" in hospital_name or "秀傳" in hospital_name:
                             hosp_codes = [] # 院內碼 (B開頭)
                             bill_codes = [] # 批價碼 (其他)
+                            spec_model_update = None # 更新型號
                             
                             for code in all_matches:
                                 clean_code = code.replace('#', '').strip()
+                                
+                                # 判斷邏輯
                                 if clean_code.upper().startswith('B'):
                                     hosp_codes.append(clean_code)
+                                elif clean_code[0].isdigit(): # 數字開頭視為型號
+                                    spec_model_update = clean_code
                                 else:
                                     bill_codes.append(clean_code)
                             
-                            # 如果同時有院內碼和批價碼，合併在同一筆
+                            # 更新物件
                             new_item = base_item.copy()
                             new_item['院內碼'] = ", ".join(hosp_codes) if hosp_codes else ""
                             new_item['批價碼'] = ", ".join(bill_codes) if bill_codes else ""
                             
-                            # 只有當至少有一種碼時才加入
-                            if new_item['院內碼'] or new_item['批價碼']:
+                            if spec_model_update:
+                                new_item['型號'] = spec_model_update
+                                new_item['搜尋用字串'] += f" {spec_model_update}"
+
+                            # 只要有任何碼就加入
+                            if new_item['院內碼'] or new_item['批價碼'] or spec_model_update:
                                 processed_list.append(new_item)
                             else:
-                                # 理論上不會發生，因為 all_matches 有值
                                 processed_list.append(base_item)
                                 
                         else:
@@ -258,6 +266,14 @@ def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
         for allow in allow_list:
+            # 修正：針對 "國立陽明" 這種短關鍵字，避免抓到 "北市聯醫-陽明"
+            if allow == "國立陽明" or allow == "陽明":
+                if "國立陽明" in h or "陽明大學" in h or "陽明交通" in h:
+                    filtered.append(h)
+                    break
+                else:
+                    continue # 避免抓到北市聯醫
+                    
             if allow == h or (len(allow) > 1 and allow in h):
                 filtered.append(h)
                 break
@@ -312,11 +328,16 @@ def main():
 
         if st.session_state.data is not None:
             df = st.session_state.data
+            
+            # 取得資料庫中所有醫院
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             
+            # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
+                # 噥噥模式：**只**顯示 MANAGER_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
+                # 一般模式：只顯示 PUBLIC_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -328,6 +349,7 @@ def main():
                     if st.session_state.qry_hosp and len(st.session_state.qry_hosp) == 1:
                         if st.session_state.qry_hosp[0] in hosp_options:
                             default_idx = hosp_options.index(st.session_state.qry_hosp[0])
+                    
                     s_hosp_single = st.selectbox("🏥 選擇醫院", options=hosp_options, index=default_idx)
                     s_hosp = [s_hosp_single] if s_hosp_single != "(全部)" else []
                 else:
@@ -418,7 +440,6 @@ def main():
             
             if st.session_state.qry_code:
                 k = st.session_state.qry_code.strip()
-                # 院內碼、批價碼、備註 都要搜
                 m1 = filtered_df['院內碼'].str.contains(k, case=False, na=False)
                 m2 = filtered_df['批價碼'].str.contains(k, case=False, na=False)
                 m3 = filtered_df['原始備註'].str.contains(k, case=False, na=False)
@@ -438,7 +459,6 @@ def main():
             st.caption(f"搜尋結果：{len(filtered_df)} 筆")
             
             if not filtered_df.empty:
-                # 顯示欄位：增加 '批價碼'
                 display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼', '批價碼']
                 st.dataframe(
                     filtered_df[display_cols].style.map(
