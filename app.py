@@ -170,7 +170,7 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 (全部都要存，以利切換) ===
+            # === 醫院白名單過濾 (模糊比對) ===
             hospital_name = row_header.strip()
             is_valid = False
             
@@ -228,6 +228,17 @@ def get_data():
         return load_data_cached(os.path.getmtime(DB_FILE))
     return None
 
+# --- Helper: 檢查醫院是否在允許清單中 (支援模糊比對) ---
+def filter_hospitals(all_hospitals, allow_list):
+    filtered = []
+    for h in all_hospitals:
+        for allow in allow_list:
+            # 完全相等 或 (長度>2 且 包含關鍵字)
+            if allow == h or (len(allow) > 2 and allow in h):
+                filtered.append(h)
+                break
+    return sorted(list(set(filtered)))
+
 # --- 4. 主程式 ---
 def main():
     db_content = get_data()
@@ -248,6 +259,7 @@ def main():
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
+    if 'select_mode' not in st.session_state: st.session_state.select_mode = "single"
 
     # --- 側邊欄 ---
     with st.sidebar:
@@ -277,16 +289,17 @@ def main():
         if st.session_state.data is not None:
             df = st.session_state.data
             
-            # 取得所有醫院清單
-            all_hosp_list = sorted(df['醫院名稱'].unique().tolist())
+            # 取得資料庫中所有醫院
+            all_db_hospitals = df['醫院名稱'].unique().tolist()
             
-            # 根據模式過濾下拉選單顯示的醫院
+            # 根據模式過濾「下拉選單」要顯示哪些醫院
+            # 這裡使用 filter_hospitals 函式來做模糊比對過濾
             if st.session_state.is_manager_mode:
-                # 噥噥模式：只顯示 噥噥專用醫院 (隱藏南區)
-                display_hosp_list = [h for h in all_hosp_list if h in MANAGER_HOSPITALS]
+                # 噥噥模式：只顯示 MANAGER_HOSPITALS 清單中的醫院
+                display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 一般模式：只顯示 南區
-                display_hosp_list = [h for h in all_hosp_list if h in PUBLIC_HOSPITALS]
+                # 一般模式：只顯示 PUBLIC_HOSPITALS 清單中的醫院
+                display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
             
@@ -301,6 +314,7 @@ def main():
                     s_hosp_single = st.selectbox("🏥 選擇醫院", options=hosp_options, index=default_idx)
                     s_hosp = [s_hosp_single] if s_hosp_single != "(全部)" else []
                 else:
+                    # 多選模式：過濾掉不該顯示的預設值
                     default_opts = [h for h in st.session_state.qry_hosp if h in display_hosp_list]
                     s_hosp = st.multiselect("🏥 選擇醫院", options=display_hosp_list, default=default_opts)
                 
@@ -375,16 +389,20 @@ def main():
             df = st.session_state.data
             filtered_df = df.copy()
 
-            # 0. 權限預先過濾
-            if not st.session_state.is_manager_mode:
-                # 一般模式：只顯示南區
-                filtered_df = filtered_df[filtered_df['醫院名稱'].isin(PUBLIC_HOSPITALS)]
+            # 0. 權限預先過濾 (主畫面表格也要擋)
+            # 取得所有資料庫中的醫院
+            all_db_hospitals = df['醫院名稱'].unique().tolist()
+            
+            if st.session_state.is_manager_mode:
+                # 噥噥模式：只顯示 MANAGER_HOSPITALS 的資料
+                allowed_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 噥噥模式：只顯示 噥噥專用
-                allowed = MANAGER_HOSPITALS
-                filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed)]
+                # 一般模式：只顯示 PUBLIC_HOSPITALS 的資料
+                allowed_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
+                
+            filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed_list)]
 
-            # 1. 醫院篩選
+            # 1. 醫院篩選 (再針對使用者選擇的醫院過濾)
             if st.session_state.qry_hosp:
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(st.session_state.qry_hosp)]
             
