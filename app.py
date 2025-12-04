@@ -9,9 +9,9 @@ import time
 # --- 1. 設定頁面配置 ---
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
-# --- 2. 設定：醫院白名單 ---
+# --- 2. 設定：醫院白名單設定 ---
 
-# A. 南區醫院 (預設顯示)
+# A. 公開顯示 (南區醫院) - 預設只顯示這些
 PUBLIC_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -28,25 +28,25 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
-# B. 噥噥專用 (特定北部/其他醫院)
+# B. 噥噥專用 (特定醫院) - 輸入密碼後才顯示
 MANAGER_HOSPITALS = [
     "新店慈濟", "內湖三總", "松山三總", 
     "國立陽明大學", "國立陽明交通大學附設醫院", 
     "輔大附醫", "羅東博愛", "衛生福利部臺北醫院"
 ]
 
-# 合併清單 (後台處理用)
+# 合併清單 (用於後台資料處理，確保這些都要存入資料庫)
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
-# CSS 樣式優化 (強制淺色無印風 & 按鈕樣式)
+# CSS 樣式優化
 st.markdown("""
     <style>
-    /* 全局設定 */
+    /* 全局淺色設定 */
     [data-testid="stAppViewContainer"] { background-color: #F5F7F9 !important; color: #2C3E50 !important; }
     [data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     h1, h2, h3, h4, h5, h6, p, span, label, div { color: #2C3E50 !important; font-family: sans-serif; }
     
-    /* 輸入框 */
+    /* 輸入框與選單 */
     .stTextInput input, .stMultiSelect div[data-baseweb="select"] > div, .stSelectbox div[data-baseweb="select"] > div {
         background-color: #FFFFFF !important;
         border: 1px solid #D0D0D0 !important;
@@ -75,7 +75,6 @@ st.markdown("""
     }
     div[data-testid="stForm"] button:active {
         background-color: #E0E0E0 !important;
-        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
     }
     
     #MainMenu {visibility: hidden;}
@@ -89,74 +88,76 @@ DB_FILE = 'local_database.pkl'
 # --- 3. 資料處理核心邏輯 ---
 def process_data(df):
     try:
-        # 1. 基礎清理
+        # 基礎清理
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
         df = df.astype(str).apply(lambda x: x.str.strip())
         
-        # 2. 自動偵測標題欄位 (找 '型號')
+        # 自動偵測標題列
         header_col_idx = -1
-        for c in range(min(15, df.shape[1])): # 掃描前15欄
+        for c in range(min(10, df.shape[1])):
             col_data = df.iloc[:, c]
-            # 寬鬆比對：只要格子裡包含 "型號" 兩個字
-            if col_data.str.contains('型號', na=False).any():
+            if col_data.apply(lambda x: x == '型號' or (len(x) < 5 and '型號' in x)).any():
                 header_col_idx = c
                 break
         
         if header_col_idx == -1:
-            return None, "錯誤：找不到『型號』欄位，請確認 Excel 格式。"
+            for c in range(min(10, df.shape[1])):
+                if df.iloc[:, c].str.contains('型號', na=False).any():
+                    header_col_idx = c
+                    break
+        
+        if header_col_idx == -1:
+            return None, "錯誤：無法偵測標題欄 (找不到『型號』)。"
 
         header_col_data = df.iloc[:, header_col_idx]
 
-        # 輔助函式：找列索引 (支援多個關鍵字)
-        def find_row_index(keywords):
-            if isinstance(keywords, str): keywords = [keywords]
-            for kw in keywords:
-                # 1. 精確比對
-                matches = header_col_data[header_col_data == kw]
-                if not matches.empty: return matches.index[0]
-                # 2. 包含比對 (去除空白後)
-                matches = header_col_data[header_col_data.str.replace(' ', '').str.contains(kw, na=False)]
-                if not matches.empty: return matches.index[0]
-            return None
+        def find_row_index(keyword):
+            matches_exact = header_col_data[header_col_data == keyword]
+            if not matches_exact.empty: return matches_exact.index[0]
+            
+            matches_nospace = header_col_data[header_col_data.str.replace(' ', '') == keyword]
+            if not matches_nospace.empty: return matches_nospace.index[0]
+                
+            matches_contains = header_col_data[
+                header_col_data.str.contains(keyword, na=False, case=False) & 
+                (header_col_data.str.len() < 15)
+            ]
+            return matches_contains.index[0] if not matches_contains.empty else None
 
-        # 3. 抓取關鍵列索引 (擴充關鍵字以抓取 Phenom)
-        idx_model = find_row_index(['型號', 'Model'])
-        # 這裡增加了 '產品名稱', '品名'，確保能抓到 Phenom 所在的列
-        idx_alias = find_row_index(['客戶簡稱', '產品名稱', '品名', '簡稱']) 
-        idx_nhi_code = find_row_index(['健保碼', '自費碼', '健保碼(自費碼)'])
-        idx_permit = find_row_index(['許可證'])
+        # 抓取關鍵列
+        idx_model = find_row_index('型號')
+        idx_alias = find_row_index('客戶簡稱') 
+        idx_nhi_code = find_row_index('健保碼')
+        if idx_nhi_code is None: idx_nhi_code = find_row_index('自費碼')
+        idx_permit = find_row_index('許可證')
         
         if idx_model is None:
             return None, "錯誤：找不到『型號』列。"
 
-        # 4. 建構產品清單
         products = {}
         total_cols = df.shape[1]
         
         for col_idx in range(header_col_idx + 1, total_cols):
             model_val = df.iloc[idx_model, col_idx]
             
-            # 過濾無效欄位
             if (model_val == '' or model_val.lower() == 'nan' or 
-                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 50):
+                '祐新' in model_val or '銀鐸' in model_val):
                 continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
             
-            # 建立搜尋字串 (關鍵：把所有資訊串在一起，轉小寫)
-            model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val)) # 純英數型號
+            model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
             full_search_text = f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
 
             products[col_idx] = {
                 '型號': model_val,
-                '產品名稱': alias_val, # 這裡會存入 Phenom
+                '產品名稱': alias_val,
                 '健保碼': nhi_val,
                 '搜尋用字串': full_search_text
             }
         
-        # 5. 提取醫院資料
         known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
         
@@ -169,11 +170,10 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 ===
+            # === 醫院白名單過濾 (全部都要存，以利切換) ===
             hospital_name = row_header.strip()
             is_valid = False
             
-            # 檢查是否在任一名單中 (全部都先存起來，前台再決定顯示哪些)
             for v_hosp in ALL_VALID_HOSPITALS:
                 if v_hosp == hospital_name:
                     is_valid = True
@@ -184,7 +184,6 @@ def process_data(df):
             
             if not is_valid: continue 
 
-            # 遍歷產品
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
@@ -229,10 +228,12 @@ def get_data():
         return load_data_cached(os.path.getmtime(DB_FILE))
     return None
 
+# --- Helper: 檢查醫院是否在允許清單中 (支援模糊比對) ---
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
         for allow in allow_list:
+            # 完全相等 或 (長度>2 且 包含關鍵字)
             if allow == h or (len(allow) > 2 and allow in h):
                 filtered.append(h)
                 break
@@ -264,10 +265,8 @@ def main():
     with st.sidebar:
         st.title("🔍 查詢條件")
         
-        # 顯示資料統計 (DEBUG用：讓使用者知道讀到了幾家醫院)
-        if st.session_state.data is not None:
-            hosp_count = len(st.session_state.data['醫院名稱'].unique())
-            st.caption(f"📊 資料庫：已載入 {hosp_count} 家醫院\n📅 更新：{st.session_state.last_updated}")
+        if st.session_state.last_updated:
+            st.caption(f"📅 資料更新：{st.session_state.last_updated}")
         
         # --- 噥噥專用解鎖開關 ---
         show_manager = st.checkbox("🔓 噥噥專用", value=st.session_state.is_manager_mode)
@@ -289,16 +288,16 @@ def main():
 
         if st.session_state.data is not None:
             df = st.session_state.data
+            
+            # 取得資料庫中所有醫院
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             
-            # 根據模式過濾下拉選單
+            # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
-                # 噥噥模式：顯示全部 (含南區 + 噥噥專用)
-                # 您提到「打V後可以隱藏南區」，但我建議顯示全部比較彈性，
-                # 或者若要嚴格執行「打V只看北部」，請將下一行改為 filter_hospitals(..., MANAGER_HOSPITALS)
-                display_hosp_list = filter_hospitals(all_db_hospitals, ALL_VALID_HOSPITALS)
+                # 噥噥模式：**只**顯示 MANAGER_HOSPITALS (隱藏南區)
+                display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 一般模式：只顯示南區
+                # 一般模式：只顯示 PUBLIC_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -310,6 +309,7 @@ def main():
                     if st.session_state.qry_hosp and len(st.session_state.qry_hosp) == 1:
                         if st.session_state.qry_hosp[0] in hosp_options:
                             default_idx = hosp_options.index(st.session_state.qry_hosp[0])
+                    
                     s_hosp_single = st.selectbox("🏥 選擇醫院", options=hosp_options, index=default_idx)
                     s_hosp = [s_hosp_single] if s_hosp_single != "(全部)" else []
                 else:
@@ -388,18 +388,19 @@ def main():
             filtered_df = df.copy()
 
             # 0. 權限預先過濾
+            # 取得所有資料庫中的醫院
+            all_db_hospitals = df['醫院名稱'].unique().tolist()
+            
             if st.session_state.is_manager_mode:
-                # 噥噥模式：(依您需求，若打勾要隱藏南區，只看專用)
-                allowed = MANAGER_HOSPITALS 
+                # 噥噥模式：只顯示 MANAGER_HOSPITALS (南區被隱藏)
+                allowed_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 一般模式：只顯示南區
-                allowed = PUBLIC_HOSPITALS
+                # 一般模式：只顯示 PUBLIC_HOSPITALS
+                allowed_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
                 
-            # 使用 filter_hospitals 進行模糊比對過濾
-            allowed_list = filter_hospitals(df['醫院名稱'].unique(), allowed)
             filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed_list)]
 
-            # 1. 醫院篩選
+            # 1. 醫院篩選 (再針對使用者選擇的醫院過濾)
             if st.session_state.qry_hosp:
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(st.session_state.qry_hosp)]
             
