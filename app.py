@@ -29,10 +29,16 @@ PUBLIC_HOSPITALS = [
 ]
 
 # B. 噥噥專用 (特定醫院) - 輸入密碼後才顯示
+# 關鍵修正：使用較短的關鍵字以確保能抓到完整名稱
 MANAGER_HOSPITALS = [
-    "新店慈濟", "內湖三總", "松山三總", 
-    "國立陽明大學", "國立陽明交通大學附設醫院", 
-    "輔大附醫", "羅東博愛", "衛生福利部臺北醫院"
+    "新店慈濟", "台北慈濟", 
+    "內湖三總", "三軍總醫院", 
+    "松山三總", "松山分院", 
+    "國立陽明", # 修正：縮短關鍵字
+    "陽明交通", # 修正：縮短關鍵字
+    "輔大", 
+    "羅東博愛", 
+    "衛生福利部臺北醫院", "部立臺北", "部立台北"
 ]
 
 # 合併清單 (用於後台資料處理，確保這些都要存入資料庫)
@@ -174,11 +180,14 @@ def process_data(df):
             hospital_name = row_header.strip()
             is_valid = False
             
+            # 使用模糊比對檢查是否在 ALL_VALID_HOSPITALS 中
             for v_hosp in ALL_VALID_HOSPITALS:
+                # 邏輯：只要 Excel 名稱包含白名單關鍵字 (且長度>2避開單字誤判) 
+                # 或 完全相等
                 if v_hosp == hospital_name:
                     is_valid = True
                     break
-                if len(v_hosp) > 2 and v_hosp in hospital_name:
+                if len(v_hosp) > 1 and v_hosp in hospital_name: # 放寬到 > 1 以抓到較短的匹配
                     is_valid = True
                     break
             
@@ -233,8 +242,8 @@ def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
         for allow in allow_list:
-            # 完全相等 或 (長度>2 且 包含關鍵字)
-            if allow == h or (len(allow) > 2 and allow in h):
+            # 只要 Excel 名稱包含關鍵字就顯示
+            if allow == h or (len(allow) > 1 and allow in h):
                 filtered.append(h)
                 break
     return sorted(list(set(filtered)))
@@ -294,7 +303,7 @@ def main():
             
             # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
-                # 噥噥模式：**只**顯示 MANAGER_HOSPITALS (隱藏南區)
+                # 噥噥模式：**只**顯示 MANAGER_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
                 # 一般模式：只顯示 PUBLIC_HOSPITALS
@@ -400,7 +409,7 @@ def main():
                 
             filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed_list)]
 
-            # 1. 醫院篩選 (再針對使用者選擇的醫院過濾)
+            # 1. 醫院篩選
             if st.session_state.qry_hosp:
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(st.session_state.qry_hosp)]
             
