@@ -10,6 +10,8 @@ import time
 st.set_page_config(page_title="醫療產品查詢系統", layout="wide", page_icon="🏥")
 
 # --- 2. 設定：醫院白名單設定 ---
+
+# A. 公開顯示 (南區醫院) - 預設只顯示這些
 PUBLIC_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -26,12 +28,15 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
+# B. 噥噥專用 (特定醫院) - 輸入密碼後才顯示
+# 新增：明確列出 "國立陽明大學" 全名，確保不會漏抓
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明", "陽明交通", 
-    "輔大", "羅東博愛", "衛生福利部臺北醫院", "部立臺北"
+    "國立陽明", "陽明交通", "國立陽明大學", "國立陽明交通大學附設醫院",
+    "輔大", "羅東博愛", 
+    "衛生福利部臺北醫院", "部立臺北"
 ]
 
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
@@ -89,12 +94,10 @@ def process_data(df):
         
         # 自動偵測標題列
         header_col_idx = -1
-        # 優先找「完全等於」型號的格子
         for c in range(min(15, df.shape[1])):
             if df.iloc[:, c].apply(lambda x: x == '型號').any():
                 header_col_idx = c
                 break
-        # 若找不到，退而求其次找「包含」型號的
         if header_col_idx == -1:
             for c in range(min(15, df.shape[1])):
                 if df.iloc[:, c].str.contains('型號', na=False).any():
@@ -109,20 +112,17 @@ def process_data(df):
         def find_row_index(keywords):
             if isinstance(keywords, str): keywords = [keywords]
             for kw in keywords:
-                # 1. 精確比對
                 matches = header_col_data[header_col_data == kw]
                 if not matches.empty: return matches.index[0]
-                # 2. 去空白後比對
                 matches = header_col_data[header_col_data.str.replace(' ', '') == kw]
                 if not matches.empty: return matches.index[0]
-                # 3. 包含比對
                 matches = header_col_data[header_col_data.str.contains(kw, na=False) & (header_col_data.str.len() < 20)]
                 if not matches.empty: return matches.index[0]
             return None
 
         # 抓取關鍵列
         idx_model = find_row_index('型號')
-        idx_alias = find_row_index(['客戶簡稱', '產品名稱', '品名']) # 這裡抓 Phenom
+        idx_alias = find_row_index(['客戶簡稱', '產品名稱', '品名']) 
         idx_nhi_code = find_row_index(['健保碼', '自費碼', '健保碼(自費碼)'])
         idx_permit = find_row_index('許可證')
         
@@ -136,7 +136,6 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, total_cols):
             model_val = df.iloc[idx_model, col_idx]
             
-            # 過濾無效欄位
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 50):
                 continue
@@ -145,7 +144,6 @@ def process_data(df):
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
             
-            # 建立搜尋字串 (包含所有關鍵資訊)
             model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
             full_search_text = f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
 
@@ -156,7 +154,6 @@ def process_data(df):
                 '搜尋用字串': full_search_text
             }
         
-        # 提取醫院資料
         known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
         
@@ -169,14 +166,19 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 ===
+            # === 醫院白名單過濾 (優化比對邏輯) ===
             hospital_name = row_header.strip()
+            # 為了比對準確，建立一個去除空白的暫存名稱
+            hospital_name_clean = hospital_name.replace(' ', '')
+            
             is_valid = False
             for v_hosp in ALL_VALID_HOSPITALS:
-                if v_hosp == hospital_name:
+                v_hosp_clean = v_hosp.replace(' ', '')
+                # 邏輯：只要 Excel 名稱包含白名單關鍵字 (且長度>1) 或 完全相等
+                if v_hosp_clean == hospital_name_clean:
                     is_valid = True
                     break
-                if len(v_hosp) > 1 and v_hosp in hospital_name:
+                if len(v_hosp_clean) > 1 and v_hosp_clean in hospital_name_clean:
                     is_valid = True
                     break
             
@@ -186,14 +188,14 @@ def process_data(df):
                 cell_content = str(row.iloc[col_idx])
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
-                    # 抓取院內碼
+                    # 抓取院內碼 #Code
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
                     matches = re.findall(pattern, cell_content)
                     
                     base_item = {
                         '醫院名稱': hospital_name,
-                        '型號': p_info['型號'],      # 固定使用產品型號
-                        '產品名稱': p_info['產品名稱'], # 固定使用產品名稱
+                        '型號': p_info['型號'],      # 固定使用上方標題列的型號
+                        '產品名稱': p_info['產品名稱'], # 固定使用上方標題列的名稱
                         '健保碼': p_info['健保碼'],
                         '院內碼': "",
                         '原始備註': cell_content,
@@ -205,12 +207,13 @@ def process_data(df):
                             new_item = base_item.copy()
                             new_item['院內碼'] = code_raw.replace('#', '').strip()
                             
-                            # 這裡僅將括號內的字加入搜尋索引，但不改變顯示的型號
+                            # 這裡僅將括號內的字加入搜尋索引 (方便搜尋找到)，但不改變介面上顯示的固定型號
                             if spec_text:
                                 new_item['搜尋用字串'] += f" {spec_text.lower()}"
                                 
                             processed_list.append(new_item)
                     else:
+                        # 沒抓到 #碼 也要保留顯示 (可能只有價格或備註)
                         processed_list.append(base_item)
 
         return pd.DataFrame(processed_list), None
@@ -235,8 +238,10 @@ def get_data():
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
+        h_clean = h.replace(' ', '') # 清除空格比對
         for allow in allow_list:
-            if allow == h or (len(allow) > 1 and allow in h):
+            allow_clean = allow.replace(' ', '')
+            if allow_clean == h_clean or (len(allow_clean) > 1 and allow_clean in h_clean):
                 filtered.append(h)
                 break
     return sorted(list(set(filtered)))
@@ -292,9 +297,12 @@ def main():
             df = st.session_state.data
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             
+            # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
+                # 噥噥模式：只顯示 MANAGER_HOSPITALS (隱藏南區)
                 display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
+                # 一般模式：只顯示 PUBLIC_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -383,13 +391,13 @@ def main():
             df = st.session_state.data
             filtered_df = df.copy()
 
-            # 權限預先過濾
+            # 0. 權限預先過濾
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             if st.session_state.is_manager_mode:
                 allowed_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
                 allowed_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
-                
+            
             filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed_list)]
 
             # 1. 醫院篩選
