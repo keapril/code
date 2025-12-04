@@ -29,13 +29,13 @@ PUBLIC_HOSPITALS = [
 ]
 
 # B. 噥噥專用 (特定醫院)
-# 修正：移除模糊的 "陽明"，改用精確的 "國立陽明"
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明", "陽明交通", # 修正這裡
-    "輔大", "羅東博愛", 
+    "國立陽明大學", # 修正為完整名稱
+    "國立陽明交通大學附設醫院", 
+    "輔大附醫", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
@@ -185,9 +185,9 @@ def process_data(df):
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
                     
-                    # 抓取所有 #Code
-                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
-                    all_matches = re.findall(pattern, cell_content)
+                    # 抓取代碼和括號內容 (例如 #1809411(610132))
+                    pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
+                    all_matches = re.findall(pattern_with_spec, cell_content)
                     
                     base_item = {
                         '醫院名稱': hospital_name,
@@ -201,24 +201,24 @@ def process_data(df):
                     }
                     
                     if all_matches:
-                        # === 特殊邏輯：台南市立(秀傳) ===
+                        # === 特殊邏輯：台南市立(秀傳) 判斷院內碼/批價碼/型號 ===
                         if "台南市立" in hospital_name or "秀傳" in hospital_name:
                             hosp_codes = [] # 院內碼 (B開頭)
-                            bill_codes = [] # 批價碼 (其他)
+                            bill_codes = [] # 批價碼 (其他英文開頭)
                             spec_model_update = None # 更新型號
                             
-                            for code in all_matches:
-                                clean_code = code.replace('#', '').strip()
+                            for code_raw, spec in all_matches:
+                                clean_code = code_raw.replace('#', '').strip()
                                 
-                                # 判斷邏輯
                                 if clean_code.upper().startswith('B'):
                                     hosp_codes.append(clean_code)
-                                elif clean_code[0].isdigit(): # 數字開頭視為型號
-                                    spec_model_update = clean_code
+                                elif clean_code[0].isdigit(): 
+                                    # 數字開頭作為該筆資料的型號 (依需求)
+                                    spec_model_update = clean_code 
                                 else:
-                                    bill_codes.append(clean_code)
+                                    bill_codes.append(clean_code) # 其他英文開頭
                             
-                            # 更新物件
+                            # 更新物件 (合併在同一列)
                             new_item = base_item.copy()
                             new_item['院內碼'] = ", ".join(hosp_codes) if hosp_codes else ""
                             new_item['批價碼'] = ", ".join(bill_codes) if bill_codes else ""
@@ -227,17 +227,26 @@ def process_data(df):
                                 new_item['型號'] = spec_model_update
                                 new_item['搜尋用字串'] += f" {spec_model_update}"
 
-                            # 只要有任何碼就加入
                             if new_item['院內碼'] or new_item['批價碼'] or spec_model_update:
                                 processed_list.append(new_item)
                             else:
                                 processed_list.append(base_item)
                                 
                         else:
-                            # === 一般醫院邏輯：多個碼拆分多筆 ===
-                            for code in all_matches:
+                            # === 一般醫院邏輯 (中國安南等)：多碼拆分多筆，並提取型號 ===
+                            for code_raw, spec_text in all_matches:
                                 new_item = base_item.copy()
-                                new_item['院內碼'] = code.replace('#', '').strip()
+                                new_item['院內碼'] = code_raw.replace('#', '').strip()
+                                
+                                # 修正：如果括號內有字串，則用它作為型號 (610132)
+                                if spec_text:
+                                    spec_text = spec_text.strip()
+                                    # 只取第一個詞，確保簡潔
+                                    spec_model = spec_text.split()[0]
+                                    
+                                    new_item['型號'] = spec_model
+                                    new_item['搜尋用字串'] += f" {spec_model.lower()}"
+                                
                                 processed_list.append(new_item)
                     else:
                         # 沒抓到 #碼 也要保留顯示
@@ -272,7 +281,7 @@ def filter_hospitals(all_hospitals, allow_list):
                     filtered.append(h)
                     break
                 else:
-                    continue # 避免抓到北市聯醫
+                    continue 
                     
             if allow == h or (len(allow) > 1 and allow in h):
                 filtered.append(h)
@@ -328,16 +337,11 @@ def main():
 
         if st.session_state.data is not None:
             df = st.session_state.data
-            
-            # 取得資料庫中所有醫院
             all_db_hospitals = df['醫院名稱'].unique().tolist()
             
-            # 根據模式過濾「下拉選單」要顯示哪些醫院
             if st.session_state.is_manager_mode:
-                # 噥噥模式：**只**顯示 MANAGER_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS)
             else:
-                # 一般模式：只顯示 PUBLIC_HOSPITALS
                 display_hosp_list = filter_hospitals(all_db_hospitals, PUBLIC_HOSPITALS)
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -349,7 +353,6 @@ def main():
                     if st.session_state.qry_hosp and len(st.session_state.qry_hosp) == 1:
                         if st.session_state.qry_hosp[0] in hosp_options:
                             default_idx = hosp_options.index(st.session_state.qry_hosp[0])
-                    
                     s_hosp_single = st.selectbox("🏥 選擇醫院", options=hosp_options, index=default_idx)
                     s_hosp = [s_hosp_single] if s_hosp_single != "(全部)" else []
                 else:
