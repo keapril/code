@@ -73,6 +73,9 @@ st.markdown("""
         border-color: #999999 !important;
         color: #333333 !important;
     }
+    div[data-testid="stForm"] button:active {
+        background-color: #E0E0E0 !important;
+    }
     
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -167,7 +170,7 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 (全部都要存) ===
+            # === 醫院白名單過濾 (全部都要存，以利切換) ===
             hospital_name = row_header.strip()
             is_valid = False
             
@@ -258,7 +261,7 @@ def main():
         
         if show_manager and not st.session_state.is_manager_mode:
             m_pwd = st.text_input("請輸入密碼", type="password", key="manager_pwd_input")
-            if m_pwd == "163": # 密碼更改為 163 (噥噥專用)
+            if m_pwd == "163": 
                 st.session_state.is_manager_mode = True
                 st.success("噥噥模式已啟用")
                 time.sleep(0.5)
@@ -279,10 +282,10 @@ def main():
             
             # 根據模式過濾下拉選單顯示的醫院
             if st.session_state.is_manager_mode:
-                # 噥噥模式：顯示 南區 + 噥噥專用醫院
-                display_hosp_list = [h for h in all_hosp_list if h in PUBLIC_HOSPITALS or h in MANAGER_HOSPITALS]
+                # 噥噥模式：只顯示 噥噥專用醫院 (隱藏南區)
+                display_hosp_list = [h for h in all_hosp_list if h in MANAGER_HOSPITALS]
             else:
-                # 一般模式：只顯示南區白名單內的醫院
+                # 一般模式：只顯示 南區
                 display_hosp_list = [h for h in all_hosp_list if h in PUBLIC_HOSPITALS]
             
             mode = st.radio("選擇醫院模式", ["單選 (自動收合)", "多選 (比較用)"], index=0, horizontal=True)
@@ -345,7 +348,7 @@ def main():
                         st.rerun()
 
                 password = st.text_input("維護密碼", type="password")
-                if password == "197": # 密碼更改為 197 (資料維護員專用)
+                if password == "197": 
                     uploaded_file = st.file_uploader("上傳 Excel", type=['xlsx'])
                     if uploaded_file:
                         with st.spinner('處理中...'):
@@ -358,7 +361,7 @@ def main():
                                 
                                 st.session_state.data = clean_df
                                 st.session_state.last_updated = update_time
-                                st.success(f"成功！匯入 {len(clean_df)} 筆 (含南區+噥噥專用)。")
+                                st.success(f"成功！匯入 {len(clean_df)} 筆。")
                                 time.sleep(1)
                                 st.rerun()
                             else:
@@ -377,8 +380,8 @@ def main():
                 # 一般模式：只顯示南區
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(PUBLIC_HOSPITALS)]
             else:
-                # 噥噥模式：顯示 南區 + 噥噥專用
-                allowed = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
+                # 噥噥模式：只顯示 噥噥專用
+                allowed = MANAGER_HOSPITALS
                 filtered_df = filtered_df[filtered_df['醫院名稱'].isin(allowed)]
 
             # 1. 醫院篩選
