@@ -31,11 +31,14 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
+# B. 噥噥專用 (特定醫院)
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明大學", "國立陽明交通大學附設醫院", "國立陽明",
+    # === 這裡改得很精確，只抓「國立」開頭的 ===
+    "國立陽明",      # 這會抓到 "國立陽明大學" 和 "國立陽明交通大學..."
+    # ======================================
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
@@ -270,12 +273,18 @@ def get_data():
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
+        # 1. 安全網：先踢掉「北市聯醫」，確保完全不干擾
+        if "聯醫" in h:
+            continue
+
+        # 2. 比對白名單
         for allow in allow_list:
-            if "陽明" in allow:
-                if "陽明大學" in h or "陽明交通" in h or "國立陽明" in h:
-                    if "聯醫" not in h: filtered.append(h); break
-                continue
-            if allow == h or (len(allow) > 1 and allow in h): filtered.append(h); break
+            # 只要醫院名稱 (h) 裡面包含清單關鍵字 (allow)
+            # 例如："國立陽明交通大學附設醫院" 包含 "國立陽明" -> 成功！
+            if allow in h:
+                filtered.append(h)
+                break 
+                
     return sorted(list(set(filtered)))
 
 # --- 5. 主程式 ---
@@ -460,3 +469,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
