@@ -29,13 +29,13 @@ PUBLIC_HOSPITALS = [
 ]
 
 # B. 噥噥專用 (特定醫院)
+# 修正：加入 "國立陽明大學" 等精確全名
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明大學", # 修正為完整名稱
-    "國立陽明交通大學附設醫院", 
-    "輔大附醫", "羅東博愛", 
+    "國立陽明大學", "國立陽明交通大學附設醫院", "國立陽明", # 確保抓到
+    "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
@@ -94,15 +94,11 @@ def process_data(df):
         
         # 自動偵測標題列
         header_col_idx = -1
+        # 掃描前15欄，找包含"型號"的列
         for c in range(min(15, df.shape[1])):
-            if df.iloc[:, c].apply(lambda x: x == '型號').any():
+            if df.iloc[:, c].astype(str).apply(lambda x: '型號' in x).any():
                 header_col_idx = c
                 break
-        if header_col_idx == -1:
-            for c in range(min(15, df.shape[1])):
-                if df.iloc[:, c].str.contains('型號', na=False).any():
-                    header_col_idx = c
-                    break
         
         if header_col_idx == -1:
             return None, "錯誤：無法偵測標題欄 (找不到『型號』)。"
@@ -112,10 +108,13 @@ def process_data(df):
         def find_row_index(keywords):
             if isinstance(keywords, str): keywords = [keywords]
             for kw in keywords:
+                # 1. 精確比對
                 matches = header_col_data[header_col_data == kw]
                 if not matches.empty: return matches.index[0]
+                # 2. 去空白後比對
                 matches = header_col_data[header_col_data.str.replace(' ', '') == kw]
                 if not matches.empty: return matches.index[0]
+                # 3. 包含比對
                 matches = header_col_data[header_col_data.str.contains(kw, na=False) & (header_col_data.str.len() < 20)]
                 if not matches.empty: return matches.index[0]
             return None
@@ -185,9 +184,9 @@ def process_data(df):
                 
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
                     
-                    # 抓取代碼和括號內容 (例如 #1809411(610132))
-                    pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
-                    all_matches = re.findall(pattern_with_spec, cell_content)
+                    # 抓取所有 #Code
+                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
+                    all_matches = re.findall(pattern, cell_content)
                     
                     base_item = {
                         '醫院名稱': hospital_name,
@@ -201,24 +200,25 @@ def process_data(df):
                     }
                     
                     if all_matches:
-                        # === 特殊邏輯：台南市立(秀傳) 判斷院內碼/批價碼/型號 ===
+                        # === 特殊邏輯 1：台南市立(秀傳) ===
                         if "台南市立" in hospital_name or "秀傳" in hospital_name:
-                            hosp_codes = [] # 院內碼 (B開頭)
+                            hosp_codes = [] # 院內碼 (#B開頭)
                             bill_codes = [] # 批價碼 (其他英文開頭)
-                            spec_model_update = None # 更新型號
+                            spec_model_update = None # 型號 (#數字開頭)
                             
-                            for code_raw, spec in all_matches:
-                                clean_code = code_raw.replace('#', '').strip()
+                            for code in all_matches:
+                                clean_code = code.replace('#', '').strip()
                                 
                                 if clean_code.upper().startswith('B'):
                                     hosp_codes.append(clean_code)
                                 elif clean_code[0].isdigit(): 
-                                    # 數字開頭作為該筆資料的型號 (依需求)
-                                    spec_model_update = clean_code 
+                                    # #數字開頭 -> 視為特定型號
+                                    spec_model_update = clean_code
                                 else:
-                                    bill_codes.append(clean_code) # 其他英文開頭
+                                    # 其他英文開頭 -> 視為批價碼
+                                    bill_codes.append(clean_code)
                             
-                            # 更新物件 (合併在同一列)
+                            # 合併為一列 (一個產品一列)
                             new_item = base_item.copy()
                             new_item['院內碼'] = ", ".join(hosp_codes) if hosp_codes else ""
                             new_item['批價碼'] = ", ".join(bill_codes) if bill_codes else ""
@@ -227,27 +227,41 @@ def process_data(df):
                                 new_item['型號'] = spec_model_update
                                 new_item['搜尋用字串'] += f" {spec_model_update}"
 
+                            # 只要有任何碼就加入
                             if new_item['院內碼'] or new_item['批價碼'] or spec_model_update:
                                 processed_list.append(new_item)
                             else:
                                 processed_list.append(base_item)
                                 
                         else:
-                            # === 一般醫院邏輯 (中國安南等)：多碼拆分多筆，並提取型號 ===
-                            for code_raw, spec_text in all_matches:
-                                new_item = base_item.copy()
-                                new_item['院內碼'] = code_raw.replace('#', '').strip()
-                                
-                                # 修正：如果括號內有字串，則用它作為型號 (610132)
-                                if spec_text:
-                                    spec_text = spec_text.strip()
-                                    # 只取第一個詞，確保簡潔
-                                    spec_model = spec_text.split()[0]
+                            # === 一般邏輯 (中國安南等)：檢查括號內的型號 ===
+                            # 重新抓取包含括號的模式
+                            pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
+                            matches_with_spec = re.findall(pattern_with_spec, cell_content)
+                            
+                            if matches_with_spec:
+                                for code_raw, spec_text in matches_with_spec:
+                                    new_item = base_item.copy()
+                                    new_item['院內碼'] = code_raw.replace('#', '').strip()
                                     
-                                    new_item['型號'] = spec_model
-                                    new_item['搜尋用字串'] += f" {spec_model.lower()}"
-                                
-                                processed_list.append(new_item)
+                                    # 中國安南規則：如果有括號內容 (且不是日期或議價)，視為型號
+                                    if spec_text:
+                                        spec_text = spec_text.strip()
+                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
+                                        if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
+                                            # 取出括號內的型號，更新該筆資料
+                                            # 只取第一段文字 (避免抓到後面可能有的日期)
+                                            pure_spec = spec_text.split()[0]
+                                            new_item['型號'] = pure_spec
+                                            new_item['搜尋用字串'] += f" {pure_spec.lower()}"
+                                    
+                                    processed_list.append(new_item)
+                            else:
+                                # 如果 regex 沒抓到括號模式，就用簡單模式抓代碼
+                                for code in all_matches:
+                                    new_item = base_item.copy()
+                                    new_item['院內碼'] = code.replace('#', '').strip()
+                                    processed_list.append(new_item)
                     else:
                         # 沒抓到 #碼 也要保留顯示
                         processed_list.append(base_item)
@@ -275,14 +289,15 @@ def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
         for allow in allow_list:
-            # 修正：針對 "國立陽明" 這種短關鍵字，避免抓到 "北市聯醫-陽明"
-            if allow == "國立陽明" or allow == "陽明":
-                if "國立陽明" in h or "陽明大學" in h or "陽明交通" in h:
-                    filtered.append(h)
-                    break
-                else:
-                    continue 
-                    
+            # 特殊處理：陽明大學 (精確比對，避免抓到北市聯醫)
+            if "陽明" in allow:
+                if "陽明大學" in h or "陽明交通" in h or "國立陽明" in h:
+                    if "聯醫" not in h: # 排除北市聯醫
+                        filtered.append(h)
+                        break
+                continue
+            
+            # 一般比對：包含且長度>1
             if allow == h or (len(allow) > 1 and allow in h):
                 filtered.append(h)
                 break
@@ -404,10 +419,18 @@ def main():
 
                 password = st.text_input("維護密碼", type="password")
                 if password == "197": 
-                    uploaded_file = st.file_uploader("上傳 Excel", type=['xlsx'])
+                    uploaded_file = st.file_uploader("上傳 Excel 或 CSV", type=['xlsx', 'csv'])
                     if uploaded_file:
                         with st.spinner('處理中...'):
-                            df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
+                            if uploaded_file.name.endswith('.csv'):
+                                try:
+                                    df_raw = pd.read_csv(uploaded_file, header=None)
+                                except:
+                                    uploaded_file.seek(0)
+                                    df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
+                            else:
+                                df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
+                                
                             clean_df, error = process_data(df_raw)
                             if clean_df is not None:
                                 update_time = datetime.now().strftime("%Y-%m-%d %H:%M")
