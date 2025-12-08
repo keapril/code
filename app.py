@@ -186,8 +186,7 @@ def process_data(df):
                 cell_content = str(row.iloc[col_idx])
                 
                 # === 關鍵修改：放寬資料判定 ===
-                # 原本邏輯：len(cell_content) > 1 (只有一個字的會被刪掉)
-                # 新邏輯：只要不是空值，就算只有一個字 (例如 "V" 或 "1") 也會被收錄
+                # 只要格子裡有東西 (即使只有 1 個字，如 "v") 就收錄
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
