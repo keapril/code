@@ -6,9 +6,9 @@ import pickle
 from datetime import datetime
 import time
 
-# --- 1. 設定頁面配置 (雜誌風標題) ---
+# --- 1. 設定頁面配置 ---
 st.set_page_config(
-    page_title="Medical Product Database", 
+    page_title="醫療產品查詢系統", 
     layout="wide", 
     page_icon="🌿"
 )
@@ -44,8 +44,11 @@ MANAGER_HOSPITALS = [
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
-# C. 【絕對關鍵】合併清單
+# C. 合併清單
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
+
+# 資料庫路徑
+DB_FILE = 'local_database.pkl'
 
 # --- 3. CSS 樣式優化 ---
 st.markdown("""
@@ -86,7 +89,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 4. 資料處理邏輯 ---
+# --- 4. 資料處理核心邏輯 ---
 def process_data(df):
     try:
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
@@ -185,6 +188,8 @@ def process_data(df):
         return pd.DataFrame(processed_list), None
     except Exception as e: return None, f"處理錯誤: {str(e)}"
 
+# === 修正重點：確保這兩個函式是在最外層（沒有縮排） ===
+
 def save_data(data_dict):
     with open(DB_FILE, 'wb') as f: pickle.dump(data_dict, f)
 
@@ -234,7 +239,7 @@ def main():
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # 步驟 4: 偵錯模式 (確認可讀到資料)
+    # 步驟 4: 偵錯模式
     with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
         if st.session_state.data is not None:
             raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
