@@ -132,15 +132,16 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
             
-            # 放寬型號長度限制 (針對長型號)
+            # === [優化] 放寬型號長度限制 ===
+            # 將上限調整至 1000，確保長型號（如包含生效日期的詳細描述）不會被誤刪
             if (model_val == '' or model_val.lower() == 'nan' or 
-                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 200):
+                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 1000):
                 continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             
-            # === [新功能] 強制封鎖 ACP ===
-            # 如果 Excel 標題欄的產品名稱是 ACP，直接跳過這整欄，不讀取
+            # === [ACP 防火牆] ===
+            # 如果產品名稱是 ACP，直接跳過整欄
             if alias_val.strip().upper() == 'ACP':
                 continue
                 
@@ -161,9 +162,10 @@ def process_data(df):
         processed_list = []
 
         for row_idx, row in df.iterrows():
+            # 抓取標題欄 (預設抓 B 欄)
             row_header = str(row.iloc[header_col_idx])
             
-            # 左側雷達
+            # 左側雷達 (修正跨欄錯位)
             if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
                 prev_val = str(row.iloc[header_col_idx - 1])
                 if prev_val and prev_val.lower() != 'nan':
@@ -175,12 +177,13 @@ def process_data(df):
             
             # === 醫院白名單過濾 ===
             hospital_name = row_header.strip()
+            # 暴力清洗
             hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name)
             hospital_name = hospital_name.replace('　', ' ') 
             
             is_valid = False
             
-            # VIP 通道
+            # 陽明 VIP 通道
             if "國立陽明" in hospital_name:
                 is_valid = True
             else:
@@ -198,7 +201,7 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # 只要格子裡有東西就收錄
+                # 只要格子裡有東西就收錄 (支援單一字元 "v")
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
@@ -254,13 +257,13 @@ def process_data(df):
                                     
                                     if spec_text:
                                         spec_text = spec_text.strip()
-                                        # === 關鍵修正：將 'ACP' 也加入排除清單 ===
+                                        # 排除清單 (包含 ACP)
                                         exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
                                         
                                         if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                             pure_spec = spec_text.split()[0]
                                             
-                                            # 中文檢查
+                                            # 中文檢查：若括號內型號含中文，則忽略 (使用原標題型號)
                                             if not re.search(r'[\u4e00-\u9fff]', pure_spec):
                                                 new_item['型號'] = pure_spec
                                                 new_item['搜尋用字串'] += f" {pure_spec.lower()}"
