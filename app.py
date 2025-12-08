@@ -169,7 +169,6 @@ def process_data(df):
             
             # === 醫院白名單過濾 ===
             hospital_name = row_header.strip()
-            # 暴力清洗：清除全形空格、隱形字元
             hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name)
             hospital_name = hospital_name.replace('　', ' ') 
             
@@ -249,11 +248,17 @@ def process_data(df):
                                     
                                     if spec_text:
                                         spec_text = spec_text.strip()
-                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
+                                        # === 關鍵修正：加入 '銀鐸', '祐新' 到排除清單 ===
+                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新']
+                                        
                                         if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                             pure_spec = spec_text.split()[0]
-                                            new_item['型號'] = pure_spec
-                                            new_item['搜尋用字串'] += f" {pure_spec.lower()}"
+                                            
+                                            # === 關鍵修正：如果提取出的型號包含任何中文字，則忽略它 (使用原標題的型號) ===
+                                            # [\u4e00-\u9fff] 是中文字的 Unicode 範圍
+                                            if not re.search(r'[\u4e00-\u9fff]', pure_spec):
+                                                new_item['型號'] = pure_spec
+                                                new_item['搜尋用字串'] += f" {pure_spec.lower()}"
                                     
                                     processed_list.append(new_item)
                             else:
@@ -321,8 +326,6 @@ def main():
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
-
-    # (偵錯模式已移除)
 
     # --- 側邊欄 ---
     with st.sidebar:
