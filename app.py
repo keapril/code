@@ -132,8 +132,10 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
             
+            # === 關鍵修改：放寬型號長度限制 ===
+            # 原本是 len(model_val) > 50 就跳過，現在改成 > 200 (因為有些型號很長)
             if (model_val == '' or model_val.lower() == 'nan' or 
-                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 50):
+                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 200):
                 continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
@@ -154,10 +156,9 @@ def process_data(df):
         processed_list = []
 
         for row_idx, row in df.iterrows():
-            # 抓取標題欄 (預設抓 B 欄)
             row_header = str(row.iloc[header_col_idx])
             
-            # 左側雷達：如果 B 欄是空的，試著抓 A 欄 (左邊一格)
+            # 左側雷達
             if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
                 prev_val = str(row.iloc[header_col_idx - 1])
                 if prev_val and prev_val.lower() != 'nan':
@@ -248,14 +249,12 @@ def process_data(df):
                                     
                                     if spec_text:
                                         spec_text = spec_text.strip()
-                                        # === 關鍵修正：加入 '銀鐸', '祐新' 到排除清單 ===
                                         exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新']
                                         
                                         if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                             pure_spec = spec_text.split()[0]
                                             
-                                            # === 關鍵修正：如果提取出的型號包含任何中文字，則忽略它 (使用原標題的型號) ===
-                                            # [\u4e00-\u9fff] 是中文字的 Unicode 範圍
+                                            # 中文檢查
                                             if not re.search(r'[\u4e00-\u9fff]', pure_spec):
                                                 new_item['型號'] = pure_spec
                                                 new_item['搜尋用字串'] += f" {pure_spec.lower()}"
