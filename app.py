@@ -157,8 +157,7 @@ def process_data(df):
             # 抓取標題欄 (預設抓 B 欄)
             row_header = str(row.iloc[header_col_idx])
             
-            # === [新功能] 左側雷達：如果 B 欄是空的，試著抓 A 欄 (左邊一格) ===
-            # 這能解決「跨欄置中」或「寫在左邊」導致讀不到醫院名的問題
+            # 左側雷達：如果 B 欄是空的，試著抓 A 欄 (左邊一格)
             if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
                 prev_val = str(row.iloc[header_col_idx - 1])
                 if prev_val and prev_val.lower() != 'nan':
@@ -194,7 +193,7 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # === [關鍵修改]：只要格子裡有東西 (即使只有 1 個字，如 "v") 就收錄 ===
+                # 只要格子裡有東西就收錄
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
@@ -323,22 +322,7 @@ def main():
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # 步驟 4: 偵錯模式
-    with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
-        if st.session_state.data is not None:
-            raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
-            st.write(f"資料庫內共有 {len(raw_hospitals)} 家醫院")
-            
-            st.write("---")
-            st.write("🔍 搜尋 '陽明' 相關結果：")
-            yangming_check = [f"[{len(h)}] {h}" for h in raw_hospitals if "陽明" in h]
-            st.write(yangming_check)
-            
-            st.write("---")
-            st.write("📋 所有醫院清單：")
-            st.write(raw_hospitals)
-        else:
-            st.write("⚠️ 目前資料庫是空的 (請先到 Settings 上傳檔案)")
+    # (偵錯模式已移除)
 
     # --- 側邊欄 ---
     with st.sidebar:
