@@ -13,7 +13,7 @@ st.set_page_config(
     page_icon="🌿"
 )
 
-# --- 2. 設定：醫院白名單設定 ---
+# --- 2. 設定：醫院白名單設定 (全域設定) ---
 
 # A. 公開顯示 (南區醫院)
 PUBLIC_HOSPITALS = [
@@ -32,19 +32,19 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
-# B. 噥噥專用 (特定醫院)
+# B. 噥噥專用 (特定醫院) - 包含所有可能的陽明關鍵字
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明大學",          # 針對 [6] 字的醫院
-    "國立陽明交通大學",      # 針對 [12] 字的醫院
-    "交通大學",              # 額外保險
+    "國立陽明大學",          # 明確指定 6 個字的
+    "國立陽明交通大學",      # 明確指定 12 個字的
+    "交通大學",              # 備用保險
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
-# C. 合併清單
+# C. 合併清單 (這行非常重要，決定了誰能進入資料庫)
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
 # 資料庫路徑
@@ -92,16 +92,20 @@ st.markdown("""
 # --- 4. 資料處理核心邏輯 ---
 def process_data(df):
     try:
+        # 基礎清理
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
         df = df.astype(str).apply(lambda x: x.str.strip())
         
+        # 自動偵測標題列
         header_col_idx = -1
         for c in range(min(15, df.shape[1])):
             if df.iloc[:, c].astype(str).apply(lambda x: '型號' in x).any():
                 header_col_idx = c
                 break
         
-        if header_col_idx == -1: return None, "錯誤：無法偵測標題欄 (找不到『型號』)。"
+        if header_col_idx == -1:
+            return None, "錯誤：無法偵測標題欄 (找不到『型號』)。"
+
         header_col_data = df.iloc[:, header_col_idx]
 
         def find_row_index(keywords):
@@ -115,80 +119,142 @@ def process_data(df):
                 if not matches.empty: return matches.index[0]
             return None
 
+        # 抓取關鍵列
         idx_model = find_row_index('型號')
         idx_alias = find_row_index(['客戶簡稱', '產品名稱', '品名']) 
         idx_nhi_code = find_row_index(['健保碼', '自費碼', '健保碼(自費碼)'])
         idx_permit = find_row_index('許可證')
         
-        if idx_model is None: return None, "錯誤：找不到『型號』列。"
+        if idx_model is None:
+            return None, "錯誤：找不到『型號』列。"
 
+        # 建構產品清單
         products = {}
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
-            if (model_val == '' or model_val.lower() == 'nan' or '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 50): continue
+            
+            if (model_val == '' or model_val.lower() == 'nan' or 
+                '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 50):
+                continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
+            
             model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
-            products[col_idx] = {'型號': model_val, '產品名稱': alias_val, '健保碼': nhi_val, '搜尋用字串': f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()}
+            products[col_idx] = {
+                '型號': model_val,
+                '產品名稱': alias_val,
+                '健保碼': nhi_val,
+                '搜尋用字串': f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
+            }
         
         known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
+        
         processed_list = []
 
         for row_idx, row in df.iterrows():
             row_header = str(row.iloc[header_col_idx])
-            if row_idx in known_indices or row_header == '' or row_header.lower() == 'nan': continue
+            
+            if row_idx in known_indices: continue
+            if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
+            # === 醫院白名單過濾 (這裡使用全域變數 ALL_VALID_HOSPITALS) ===
             hospital_name = row_header.strip()
             is_valid = False
+            
             for v_hosp in ALL_VALID_HOSPITALS:
-                if v_hosp == hospital_name or (len(v_hosp) > 1 and v_hosp in hospital_name):
-                    is_valid = True; break
+                # 寬鬆比對：只要包含關鍵字就算過關 (例如 "國立陽明大學" 包含 "國立陽明大學")
+                if v_hosp == hospital_name:
+                    is_valid = True
+                    break
+                if len(v_hosp) > 1 and v_hosp in hospital_name:
+                    is_valid = True
+                    break
+            
             if not is_valid: continue 
 
+            # 產品資料處理
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
+                
                 if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
                     all_matches = re.findall(pattern, cell_content)
-                    base_item = {'醫院名稱': hospital_name, '型號': p_info['型號'], '產品名稱': p_info['產品名稱'], '健保碼': p_info['健保碼'], '院內碼': "", '批價碼': "", '原始備註': cell_content, '搜尋用字串': p_info['搜尋用字串']}
+                    
+                    base_item = {
+                        '醫院名稱': hospital_name,
+                        '型號': p_info['型號'],
+                        '產品名稱': p_info['產品名稱'],
+                        '健保碼': p_info['健保碼'],
+                        '院內碼': "",
+                        '批價碼': "", 
+                        '原始備註': cell_content,
+                        '搜尋用字串': p_info['搜尋用字串']
+                    }
                     
                     if all_matches:
                         if "台南市立" in hospital_name or "秀傳" in hospital_name:
-                            hosp_codes, bill_codes, spec_model = [], [], None
+                            hosp_codes = []
+                            bill_codes = []
+                            spec_model_update = None
+                            
                             for code in all_matches:
-                                c = code.replace('#', '').strip()
-                                if c.upper().startswith('B'): hosp_codes.append(c)
-                                elif c[0].isdigit(): spec_model = c
-                                else: bill_codes.append(c)
+                                clean_code = code.replace('#', '').strip()
+                                if clean_code.upper().startswith('B'):
+                                    hosp_codes.append(clean_code)
+                                elif clean_code[0].isdigit(): 
+                                    spec_model_update = clean_code
+                                else:
+                                    bill_codes.append(clean_code)
+                            
                             new_item = base_item.copy()
-                            new_item['院內碼'] = ", ".join(hosp_codes); new_item['批價碼'] = ", ".join(bill_codes)
-                            if spec_model: new_item['型號'] = spec_model; new_item['搜尋用字串'] += f" {spec_model}"
-                            if new_item['院內碼'] or new_item['批價碼'] or spec_model: processed_list.append(new_item)
-                            else: processed_list.append(base_item)
+                            new_item['院內碼'] = ", ".join(hosp_codes)
+                            new_item['批價碼'] = ", ".join(bill_codes)
+                            
+                            if spec_model_update:
+                                new_item['型號'] = spec_model_update
+                                new_item['搜尋用字串'] += f" {spec_model_update}"
+
+                            if new_item['院內碼'] or new_item['批價碼'] or spec_model_update:
+                                processed_list.append(new_item)
+                            else:
+                                processed_list.append(base_item)
+                                
                         else:
-                            matches_spec = re.findall(r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?', cell_content)
-                            if matches_spec:
-                                for cr, stxt in matches_spec:
-                                    ni = base_item.copy(); ni['院內碼'] = cr.replace('#', '').strip()
-                                    if stxt:
-                                        stxt = stxt.strip()
-                                        ex = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
-                                        if not any(k in stxt for k in ex) and len(stxt) < 50:
-                                            ni['型號'] = stxt.split()[0]; ni['搜尋用字串'] += f" {ni['型號'].lower()}"
-                                    processed_list.append(ni)
+                            pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
+                            matches_with_spec = re.findall(pattern_with_spec, cell_content)
+                            
+                            if matches_with_spec:
+                                for code_raw, spec_text in matches_with_spec:
+                                    new_item = base_item.copy()
+                                    new_item['院內碼'] = code_raw.replace('#', '').strip()
+                                    
+                                    if spec_text:
+                                        spec_text = spec_text.strip()
+                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/']
+                                        if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
+                                            pure_spec = spec_text.split()[0]
+                                            new_item['型號'] = pure_spec
+                                            new_item['搜尋用字串'] += f" {pure_spec.lower()}"
+                                    
+                                    processed_list.append(new_item)
                             else:
                                 for code in all_matches:
-                                    ni = base_item.copy(); ni['院內碼'] = code.replace('#', '').strip(); processed_list.append(ni)
+                                    new_item = base_item.copy()
+                                    new_item['院內碼'] = code.replace('#', '').strip()
+                                    processed_list.append(new_item)
                     else:
                         processed_list.append(base_item)
-        return pd.DataFrame(processed_list), None
-    except Exception as e: return None, f"處理錯誤: {str(e)}"
 
-# === 修正重點：確保這兩個函式是在最外層（沒有縮排） ===
+        return pd.DataFrame(processed_list), None
+
+    except Exception as e:
+        return None, f"處理錯誤: {str(e)}"
+
+# === 關鍵修正：將儲存函式移到最外層（沒有縮排） ===
 
 def save_data(data_dict):
     with open(DB_FILE, 'wb') as f: pickle.dump(data_dict, f)
@@ -200,15 +266,17 @@ def load_data_cached(mtime):
     return None
 
 def get_data():
-    if os.path.exists(DB_FILE): return load_data_cached(os.path.getmtime(DB_FILE))
+    if os.path.exists(DB_FILE):
+        return load_data_cached(os.path.getmtime(DB_FILE))
     return None
 
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
-        # 1. 優先排除
+        # 1. 優先排除：如果是北市聯醫，直接跳過
         if "聯醫" in h or "北市聯醫" in h:
             continue
+
         # 2. 白名單比對
         for allow in allow_list:
             if allow == h or allow in h:
@@ -221,7 +289,7 @@ def main():
     # 步驟 1: 先讀取資料
     db_content = get_data()
     
-    # 步驟 2: 把資料存進 session_state (在偵錯之前)
+    # 步驟 2: 把資料存進 session_state
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -239,15 +307,18 @@ def main():
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # 步驟 4: 偵錯模式
+    # 步驟 4: 偵錯模式 (確認兩家醫院是否都進來了)
     with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
         if st.session_state.data is not None:
             raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
             st.write(f"資料庫內共有 {len(raw_hospitals)} 家醫院")
+            
             st.write("---")
             st.write("🔍 搜尋 '陽明' 相關結果：")
+            # 這裡幫你檢查是否包含「國立陽明大學」
             yangming_check = [f"[{len(h)}] {h}" for h in raw_hospitals if "陽明" in h]
             st.write(yangming_check)
+            
             st.write("---")
             st.write("📋 所有醫院清單：")
             st.write(raw_hospitals)
@@ -282,6 +353,7 @@ def main():
         if st.session_state.data is not None:
             df = st.session_state.data
             all_db_hospitals = df['醫院名稱'].unique().tolist()
+            # 確保使用最新的過濾清單
             display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS if st.session_state.is_manager_mode else PUBLIC_HOSPITALS)
             
             mode = st.radio("Display Mode", ["Single", "Multiple"], index=0, horizontal=True)
