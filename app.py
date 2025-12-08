@@ -154,20 +154,29 @@ def process_data(df):
         processed_list = []
 
         for row_idx, row in df.iterrows():
+            # 抓取標題欄 (預設抓 B 欄)
             row_header = str(row.iloc[header_col_idx])
             
+            # === [新功能] 左側雷達：如果 B 欄是空的，試著抓 A 欄 (左邊一格) ===
+            # 這能解決「跨欄置中」或「寫在左邊」導致讀不到醫院名的問題
+            if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
+                prev_val = str(row.iloc[header_col_idx - 1])
+                if prev_val and prev_val.lower() != 'nan':
+                    row_header = prev_val
+
             if row_idx in known_indices: continue
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
             # === 醫院白名單過濾 ===
             hospital_name = row_header.strip()
-            # 深度清理隱形字元
-            hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name) 
+            # 暴力清洗：清除全形空格、隱形字元
+            hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name)
+            hospital_name = hospital_name.replace('　', ' ') 
             
             is_valid = False
             
-            # VIP 通道：只要有 "國立陽明" 就放行
+            # VIP 通道
             if "國立陽明" in hospital_name:
                 is_valid = True
             else:
@@ -185,8 +194,7 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # === 關鍵修改：放寬資料判定 ===
-                # 只要格子裡有東西 (即使只有 1 個字，如 "v") 就收錄
+                # === [關鍵修改]：只要格子裡有東西 (即使只有 1 個字，如 "v") 就收錄 ===
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
@@ -315,7 +323,7 @@ def main():
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # 步驟 4: 偵錯模式 (確認兩家醫院是否都進來了)
+    # 步驟 4: 偵錯模式
     with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
         if st.session_state.data is not None:
             raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
