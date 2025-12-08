@@ -36,10 +36,9 @@ MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    # === 修正重點：明確列出這兩家不同醫院的全名 ===
-    "國立陽明大學", 
-    "國立陽明交通大學附設醫院", 
-    # ==========================================
+    "國立陽明",      # 抓國立陽明大學
+    "交通大學",      # 👈 新增這個！專門抓 "國立陽明交通大學..."
+    "附設醫院",      # 👈 或是這個，如果名稱很長通常會有這幾個字
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
@@ -288,8 +287,10 @@ def filter_hospitals(all_hospitals, allow_list):
     return sorted(list(set(filtered)))
 # --- 5. 主程式 ---
 def main():
+    # 1. 先讀取資料
     db_content = get_data()
     
+    # 2. 把資料存入 session_state (這一步最重要，要先做)
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -300,13 +301,34 @@ def main():
         st.session_state.data = None
         st.session_state.last_updated = ""
 
+    # 3. 初始化其他變數
     if 'has_searched' not in st.session_state: st.session_state.has_searched = False
     if 'qry_hosp' not in st.session_state: st.session_state.qry_hosp = []
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # --- 側邊欄設計 ---
+    # 4. 🕵️‍♀️ 偵錯模式 (現在放在這裡就安全了，因為資料已經載入完畢)
+    # 建議放在側邊欄的最上方，比較不影響主畫面美觀
+    with st.sidebar:
+        with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
+            if st.session_state.data is not None:
+                # 抓出資料庫裡所有不重複的醫院名稱
+                raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
+                st.write(f"資料庫內共有 {len(raw_hospitals)} 家醫院")
+                
+                # 幫忙檢查有沒有陽明相關的字
+                st.write("---")
+                st.write("🔍 搜尋 '陽明' 相關結果：")
+                yangming_check = [h for h in raw_hospitals if "陽明" in h]
+                if yangming_check:
+                    st.write(yangming_check)
+                else:
+                    st.warning("找不到任何包含「陽明」的醫院，請檢查 Excel 內容。")
+            else:
+                st.warning("⚠️ 目前資料庫是空的，請先上傳檔案。")
+
+    # --- 側邊欄原本的內容 ---
     with st.sidebar:
         st.markdown("### 🗂️ 查詢目錄")
         
@@ -468,5 +490,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
