@@ -132,13 +132,18 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
             
-            # === 關鍵修改：放寬型號長度限制 ===
-            # 原本是 len(model_val) > 50 就跳過，現在改成 > 200 (因為有些型號很長)
+            # 放寬型號長度限制 (針對長型號)
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 200):
                 continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
+            
+            # === [新功能] 強制封鎖 ACP ===
+            # 如果 Excel 標題欄的產品名稱是 ACP，直接跳過這整欄，不讀取
+            if alias_val.strip().upper() == 'ACP':
+                continue
+                
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
             
@@ -249,7 +254,8 @@ def process_data(df):
                                     
                                     if spec_text:
                                         spec_text = spec_text.strip()
-                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新']
+                                        # === 關鍵修正：將 'ACP' 也加入排除清單 ===
+                                        exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
                                         
                                         if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                             pure_spec = spec_text.split()[0]
