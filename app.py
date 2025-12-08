@@ -287,10 +287,11 @@ def filter_hospitals(all_hospitals, allow_list):
     return sorted(list(set(filtered)))
 # --- 5. 主程式 ---
 def main():
-    # 步驟 1: 先從檔案讀取資料
+    # 步驟 1: 先讀取資料
     db_content = get_data()
     
-    # 步驟 2: 把讀到的資料存進 session_state (這段一定要在偵錯模式之前！)
+    # 步驟 2: 【關鍵】先把資料存進 session_state
+    # (這段一定要在偵錯模式之前執行，不然偵錯模式會讀不到！)
     if isinstance(db_content, pd.DataFrame):
         st.session_state.data = db_content
         st.session_state.last_updated = "未知"
@@ -301,24 +302,24 @@ def main():
         st.session_state.data = None
         st.session_state.last_updated = ""
 
-    # 步驟 3: 初始化變數
+    # 步驟 3: 初始化其他變數
     if 'has_searched' not in st.session_state: st.session_state.has_searched = False
     if 'qry_hosp' not in st.session_state: st.session_state.qry_hosp = []
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # 步驟 4: 放入偵錯模式 (因為上面資料已經準備好了，這裡一定看得到)
+    # 步驟 4: 放入偵錯模式 (現在這裡一定讀得到資料了)
     with st.expander("🕵️‍♀️ 偵錯模式：檢查資料庫收錄名單"):
         if st.session_state.data is not None:
             # 抓出資料庫裡所有不重複的醫院名稱
             raw_hospitals = sorted(st.session_state.data['醫院名稱'].unique().tolist())
             st.write(f"資料庫內共有 {len(raw_hospitals)} 家醫院")
             
-            # 幫忙檢查有沒有陽明相關的字
             st.write("---")
             st.write("🔍 搜尋 '陽明' 相關結果：")
-            yangming_check = [h for h in raw_hospitals if "陽明" in h]
+            # 這裡幫你同時印出名稱和長度，方便檢查是不是有多餘空白鍵
+            yangming_check = [f"[{len(h)}] {h}" for h in raw_hospitals if "陽明" in h]
             st.write(yangming_check)
             
             st.write("---")
@@ -326,6 +327,7 @@ def main():
             st.write(raw_hospitals)
         else:
             st.write("⚠️ 目前資料庫是空的 (請先到 Settings 上傳檔案)")
+
 
       # --- 側邊欄原本的內容 ---
     with st.sidebar:
@@ -489,6 +491,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
