@@ -3,7 +3,7 @@ import pandas as pd
 import re
 import os
 import pickle
-from datetime import datetime, timedelta  # 加入 timedelta 處理時區
+from datetime import datetime, timedelta
 import time
 
 # --- 1. 設定頁面配置 ---
@@ -32,7 +32,7 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
-# B. 噥噥專用 (特定醫院) - 包含所有可能的陽明關鍵字
+# B. 噥噥專用 (特定醫院)
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
@@ -44,7 +44,7 @@ MANAGER_HOSPITALS = [
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
-# C. 合併清單 (這行非常重要，決定了誰能進入資料庫)
+# C. 合併清單
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
 # 資料庫路徑
@@ -119,7 +119,6 @@ def process_data(df):
                 if not matches.empty: return matches.index[0]
             return None
 
-        # 抓取關鍵列
         idx_model = find_row_index('型號')
         idx_alias = find_row_index(['客戶簡稱', '產品名稱', '品名']) 
         idx_nhi_code = find_row_index(['健保碼', '自費碼', '健保碼(自費碼)'])
@@ -162,18 +161,16 @@ def process_data(df):
             if any(k in row_header for k in exclude_keys): continue
             
             # === 醫院白名單過濾 ===
-            
-            # 1. 深度清理：去除肉眼不可見的隱形字元 (Zero-width space)
             hospital_name = row_header.strip()
-            hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name) # 清除隱形字元
+            # 深度清理隱形字元
+            hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name) 
             
             is_valid = False
             
-            # 2. 陽明專屬快速通關 (VIP通道)：只要有 "國立陽明" 四個字，直接放行，不進行後續檢查
+            # VIP 通道：只要有 "國立陽明" 就放行
             if "國立陽明" in hospital_name:
                 is_valid = True
             else:
-                # 3. 一般白名單比對
                 for v_hosp in ALL_VALID_HOSPITALS:
                     if v_hosp == hospital_name:
                         is_valid = True
@@ -188,7 +185,11 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                if cell_content and cell_content.lower() != 'nan' and len(cell_content) > 1:
+                # === 關鍵修改：放寬資料判定 ===
+                # 原本邏輯：len(cell_content) > 1 (只有一個字的會被刪掉)
+                # 新邏輯：只要不是空值，就算只有一個字 (例如 "V" 或 "1") 也會被收錄
+                if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
+                    
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
                     all_matches = re.findall(pattern, cell_content)
                     
@@ -281,7 +282,7 @@ def get_data():
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
-        # 1. 優先排除：如果是北市聯醫，直接跳過
+        # 1. 優先排除
         if "聯醫" in h or "北市聯醫" in h:
             continue
 
