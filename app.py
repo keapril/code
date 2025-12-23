@@ -198,6 +198,11 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
+                # === 關鍵修改：截斷 #解脫器 ===
+                # 如果格子裡有 "#解脫器" 標籤，視為分隔線，只取前面的內容
+                if '#解脫器' in cell_content:
+                    cell_content = cell_content.split('#解脫器')[0]
+
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
@@ -248,7 +253,7 @@ def process_data(df):
                             
                             if matches_with_spec:
                                 for code_raw, spec_text in matches_with_spec:
-                                    # === 關鍵修改：如果括號內備註包含「解脫器」，直接跳過此院內碼，不收錄 ===
+                                    # 括號備註包含解脫器也過濾
                                     if spec_text and '解脫器' in spec_text:
                                         continue
 
