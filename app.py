@@ -198,10 +198,14 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # === 關鍵修改：截斷 #解脫器 ===
-                # 如果格子裡有 "#解脫器" 標籤，視為分隔線，只取前面的內容
-                if '#解脫器' in cell_content:
-                    cell_content = cell_content.split('#解脫器')[0]
+                # === 關鍵修改：截斷邏輯強化 ===
+                # 1. 強制轉半形 hash
+                cell_content = cell_content.replace('＃', '#')
+
+                # 2. 使用 Regex 智慧截斷：
+                # 抓取 "#解脫器" 或 "# 解脫器" (有空格) 或 "(解脫器)" 後面的所有內容並丟棄
+                split_pattern = r'(#\s*解脫器|[(（]解脫器[)）])'
+                cell_content = re.split(split_pattern, cell_content)[0]
 
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
@@ -253,7 +257,7 @@ def process_data(df):
                             
                             if matches_with_spec:
                                 for code_raw, spec_text in matches_with_spec:
-                                    # 括號備註包含解脫器也過濾
+                                    # 3. 雙重保險：括號備註包含解脫器也過濾
                                     if spec_text and '解脫器' in spec_text:
                                         continue
 
