@@ -198,13 +198,13 @@ def process_data(df):
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # === 關鍵修改：截斷邏輯強化 ===
+                # === 關鍵修改：截斷邏輯再強化 ===
                 # 1. 強制轉半形 hash
                 cell_content = cell_content.replace('＃', '#')
 
-                # 2. 使用 Regex 智慧截斷：
-                # 抓取 "#解脫器" 或 "# 解脫器" (有空格) 或 "(解脫器)" 後面的所有內容並丟棄
-                split_pattern = r'(#\s*解脫器|[(（]解脫器[)）])'
+                # 2. Regex 智慧截斷：
+                # 包含 #解脫器、# 解脫器、(解脫器)、或者單純的 "解脫器" (無前綴)
+                split_pattern = r'(#\s*解脫器|[(（]解脫器[)）]|解脫器)'
                 cell_content = re.split(split_pattern, cell_content)[0]
 
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
