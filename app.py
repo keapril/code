@@ -3,6 +3,9 @@ import pandas as pd
 import re
 from datetime import datetime, timedelta
 import math
+import gzip
+import json
+import base64
 
 # --- Firebase 初始化 ---
 import firebase_admin
@@ -27,9 +30,7 @@ st.set_page_config(
     page_icon="🌿"
 )
 
-# --- 2. 設定：醫院白名單設定 (全域設定) ---
-
-# A. 公開顯示 (南區醫院)
+# --- 2. 醫院白名單設定 ---
 PUBLIC_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
     "麻豆新樓", "臺南新樓", "安南新樓",
@@ -46,58 +47,43 @@ PUBLIC_HOSPITALS = [
     "中國安南"
 ]
 
-# B. 噥噥專用 (特定醫院)
 MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明大學",          
-    "國立陽明交通大學",      
-    "交通大學",              
+    "國立陽明大學", "國立陽明交通大學", "交通大學",              
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
 
-# C. 合併清單
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
-# Firestore Collection 名稱
+# Firestore 設定
 FIRESTORE_COLLECTION = "medical_products"
-FIRESTORE_METADATA_DOC = "metadata"
-BATCH_SIZE = 500
+CHUNK_SIZE = 300  # 每塊筆數
 
-# --- 3. CSS 樣式優化 ---
+# --- 3. CSS 樣式 ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700&family=Lato:wght@300;400;700&display=swap');
-
     :root {
-        --bg-color: #F9F9F7;
-        --sidebar-bg: #F0EFEB;
-        --text-main: #4A4A4A;
-        --accent-color: #6D8B74;
-        --border-color: #D3D3D3;
-        --font-serif: 'Noto Serif TC', serif;
-        --font-sans: 'Lato', sans-serif;
+        --bg-color: #F9F9F7; --sidebar-bg: #F0EFEB; --text-main: #4A4A4A;
+        --accent-color: #6D8B74; --border-color: #D3D3D3;
+        --font-serif: 'Noto Serif TC', serif; --font-sans: 'Lato', sans-serif;
     }
-
     .stApp { background-color: var(--bg-color); color: var(--text-main); font-family: var(--font-sans); }
     [data-testid="stSidebar"] { background-color: var(--sidebar-bg); border-right: 1px solid #E5E5E5; }
     h1, h2, h3 { font-family: var(--font-serif) !important; color: #2C3639 !important; font-weight: 700; letter-spacing: 0.05em; }
-
     .main-header { font-size: 2.5rem; border-bottom: 2px solid var(--accent-color); padding-bottom: 10px; margin-bottom: 20px; text-align: center; }
     .sub-header { font-size: 1rem; color: #888; text-align: center; margin-top: -15px; margin-bottom: 30px; font-family: var(--font-sans); text-transform: uppercase; letter-spacing: 0.15em; }
-
     .stTextInput input, .stSelectbox div[data-baseweb="select"] > div, .stMultiSelect div[data-baseweb="select"] > div {
         background-color: #FFFFFF !important; border: 1px solid var(--border-color) !important; border-radius: 4px !important; color: var(--text-main) !important; box-shadow: none !important;
     }
     .stTextInput input:focus, div[data-baseweb="select"] > div:focus-within { border-color: var(--accent-color) !important; }
-
     div[data-testid="stForm"] button {
         background-color: transparent !important; color: var(--accent-color) !important; border: 1px solid var(--accent-color) !important; border-radius: 0px !important; font-family: var(--font-serif); letter-spacing: 1px; transition: all 0.3s ease; padding: 8px 16px;
     }
     div[data-testid="stForm"] button:hover { background-color: var(--accent-color) !important; color: white !important; }
-
     div[data-testid="stDataFrame"] { background-color: transparent; }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;}
     .stCheckbox label span { font-family: var(--font-serif); color: #555; }
@@ -144,40 +130,30 @@ def process_data(df):
         products = {}
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
-            
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 1000):
                 continue
-            
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
-            
             if alias_val.strip().upper() == 'ACP':
                 continue
-                
             nhi_val = df.iloc[idx_nhi_code, col_idx] if idx_nhi_code is not None else ''
             permit_val = df.iloc[idx_permit, col_idx] if idx_permit is not None else ''
-            
             model_clean = re.sub(r'[^a-zA-Z0-9]', '', str(model_val))
             products[col_idx] = {
-                '型號': model_val,
-                '產品名稱': alias_val,
-                '健保碼': nhi_val,
+                '型號': model_val, '產品名稱': alias_val, '健保碼': nhi_val,
                 '搜尋用字串': f"{model_val} {model_clean} {alias_val} {nhi_val} {permit_val}".lower()
             }
         
         known_indices = [i for i in [idx_model, idx_alias, idx_nhi_code, idx_permit] if i is not None]
         exclude_keys = ['效期', 'QSD', '產地', 'Code', 'Listing', 'None', 'Hospital', 'source', '備註', '健保價', '許可證']
-        
         processed_list = []
 
         for row_idx, row in df.iterrows():
             row_header = str(row.iloc[header_col_idx])
-            
             if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
                 prev_val = str(row.iloc[header_col_idx - 1])
                 if prev_val and prev_val.lower() != 'nan':
                     row_header = prev_val
-
             if row_idx in known_indices: continue
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
@@ -187,87 +163,60 @@ def process_data(df):
             hospital_name = hospital_name.replace('　', ' ') 
             
             is_valid = False
-            
             if "國立陽明" in hospital_name:
                 is_valid = True
             else:
                 for v_hosp in ALL_VALID_HOSPITALS:
-                    if v_hosp == hospital_name:
+                    if v_hosp == hospital_name or (len(v_hosp) > 1 and v_hosp in hospital_name):
                         is_valid = True
                         break
-                    if len(v_hosp) > 1 and v_hosp in hospital_name:
-                        is_valid = True
-                        break
-            
             if not is_valid: continue 
 
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
-                
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
-                    
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
                     all_matches = re.findall(pattern, cell_content)
                     
                     base_item = {
-                        '醫院名稱': hospital_name,
-                        '型號': p_info['型號'],
-                        '產品名稱': p_info['產品名稱'],
-                        '健保碼': p_info['健保碼'],
-                        '院內碼': "",
-                        '批價碼': "", 
-                        '原始備註': cell_content,
-                        '搜尋用字串': p_info['搜尋用字串']
+                        '醫院名稱': hospital_name, '型號': p_info['型號'], '產品名稱': p_info['產品名稱'],
+                        '健保碼': p_info['健保碼'], '院內碼': "", '批價碼': "", 
+                        '原始備註': cell_content, '搜尋用字串': p_info['搜尋用字串']
                     }
                     
                     if all_matches:
                         if "台南市立" in hospital_name or "秀傳" in hospital_name:
-                            hosp_codes = []
-                            bill_codes = []
-                            spec_model_update = None
-                            
+                            hosp_codes, bill_codes, spec_model_update = [], [], None
                             for code in all_matches:
                                 clean_code = code.replace('#', '').strip()
-                                if clean_code.upper().startswith('B'):
-                                    hosp_codes.append(clean_code)
-                                elif clean_code[0].isdigit(): 
-                                    spec_model_update = clean_code
-                                else:
-                                    bill_codes.append(clean_code)
-                            
+                                if clean_code.upper().startswith('B'): hosp_codes.append(clean_code)
+                                elif clean_code[0].isdigit(): spec_model_update = clean_code
+                                else: bill_codes.append(clean_code)
                             new_item = base_item.copy()
                             new_item['院內碼'] = ", ".join(hosp_codes)
                             new_item['批價碼'] = ", ".join(bill_codes)
-                            
                             if spec_model_update:
                                 new_item['型號'] = spec_model_update
                                 new_item['搜尋用字串'] += f" {spec_model_update}"
-
                             if new_item['院內碼'] or new_item['批價碼'] or spec_model_update:
                                 processed_list.append(new_item)
                             else:
                                 processed_list.append(base_item)
-                                
                         else:
                             pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
                             matches_with_spec = re.findall(pattern_with_spec, cell_content)
-                            
                             if matches_with_spec:
                                 for code_raw, spec_text in matches_with_spec:
                                     new_item = base_item.copy()
                                     new_item['院內碼'] = code_raw.replace('#', '').strip()
-                                    
                                     if spec_text:
                                         spec_text = spec_text.strip()
                                         exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
-                                        
                                         if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
                                             pure_spec = spec_text.split()[0]
-                                            
                                             if not re.search(r'[\u4e00-\u9fff]', pure_spec):
                                                 new_item['型號'] = pure_spec
                                                 new_item['搜尋用字串'] += f" {pure_spec.lower()}"
-                                    
                                     processed_list.append(new_item)
                             else:
                                 for code in all_matches:
@@ -276,101 +225,123 @@ def process_data(df):
                                     processed_list.append(new_item)
                     else:
                         processed_list.append(base_item)
-
         return pd.DataFrame(processed_list), None
-
     except Exception as e:
         return None, f"處理錯誤: {str(e)}"
 
-# === Firebase 分批儲存（使用 batch write 優化速度）===
+# === 壓縮版 Firebase 儲存 ===
 def save_data_to_firebase(db, df, updated_at):
-    """將 DataFrame 分批存到 Firestore"""
+    """將 DataFrame 壓縮後存到 Firestore"""
     try:
         data_records = df.to_dict('records')
         total_records = len(data_records)
-        total_batches = math.ceil(total_records / BATCH_SIZE)
         
-        # 先刪除舊資料
+        # 先清除舊資料
         clear_firebase_data(db, silent=True)
         
-        # 使用 batch write
-        batch = db.batch()
-        ops_count = 0
+        # 嘗試單一文件壓縮
+        json_str = json.dumps(data_records, ensure_ascii=False)
+        compressed = gzip.compress(json_str.encode('utf-8'))
+        size_kb = len(compressed) / 1024
         
-        for i in range(total_batches):
-            start = i * BATCH_SIZE
-            end = min(start + BATCH_SIZE, total_records)
-            batch_data = data_records[start:end]
-            
-            doc_ref = db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
-            batch.set(doc_ref, {
-                'data': batch_data,
-                'batch_index': i
+        if size_kb < 900:
+            # 單一文件存入
+            compressed_b64 = base64.b64encode(compressed).decode('ascii')
+            doc_ref = db.collection(FIRESTORE_COLLECTION).document('compressed_data')
+            doc_ref.set({
+                'data': compressed_b64,
+                'updated_at': updated_at,
+                'record_count': total_records,
+                'compressed_size_kb': round(size_kb, 1),
+                'is_chunked': False
             })
-            ops_count += 1
+        else:
+            # 分塊壓縮存入
+            total_chunks = math.ceil(total_records / CHUNK_SIZE)
             
-            if ops_count >= 400:
-                batch.commit()
-                batch = db.batch()
-                ops_count = 0
+            for i in range(total_chunks):
+                start = i * CHUNK_SIZE
+                end = min(start + CHUNK_SIZE, total_records)
+                chunk_data = data_records[start:end]
+                
+                chunk_json = json.dumps(chunk_data, ensure_ascii=False)
+                chunk_compressed = gzip.compress(chunk_json.encode('utf-8'))
+                chunk_b64 = base64.b64encode(chunk_compressed).decode('ascii')
+                
+                doc_ref = db.collection(FIRESTORE_COLLECTION).document(f"chunk_{i}")
+                doc_ref.set({'data': chunk_b64, 'chunk_index': i})
+            
+            # 存元資料
+            meta_ref = db.collection(FIRESTORE_COLLECTION).document('metadata')
+            meta_ref.set({
+                'updated_at': updated_at,
+                'record_count': total_records,
+                'total_chunks': total_chunks,
+                'is_chunked': True
+            })
         
-        # 加入元資料
-        meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
-        batch.set(meta_ref, {
-            'updated_at': updated_at,
-            'record_count': total_records,
-            'total_batches': total_batches
-        })
-        
-        batch.commit()
         return True
     except Exception as e:
         st.error(f"儲存到 Firebase 失敗: {e}")
         return False
 
-# === Firebase 讀取 ===
+# === 壓縮版 Firebase 讀取 ===
 @st.cache_data(ttl=300, show_spinner=False)
 def load_data_from_firebase(_db):
-    """從 Firestore 讀取所有批次資料"""
+    """從 Firestore 讀取壓縮資料"""
     try:
-        meta_ref = _db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
+        # 先嘗試單一壓縮文件
+        doc_ref = _db.collection(FIRESTORE_COLLECTION).document('compressed_data')
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            doc_data = doc.to_dict()
+            if not doc_data.get('is_chunked', False):
+                compressed_b64 = doc_data['data']
+                compressed = base64.b64decode(compressed_b64)
+                json_str = gzip.decompress(compressed).decode('utf-8')
+                data = json.loads(json_str)
+                return {'df': pd.DataFrame(data), 'updated_at': doc_data.get('updated_at', '未知')}
+        
+        # 嘗試分塊資料
+        meta_ref = _db.collection(FIRESTORE_COLLECTION).document('metadata')
         meta_doc = meta_ref.get()
         
         if not meta_doc.exists:
             return None
         
         meta_data = meta_doc.to_dict()
-        total_batches = meta_data.get('total_batches', 0)
+        total_chunks = meta_data.get('total_chunks', 0)
         updated_at = meta_data.get('updated_at', '未知')
         
         all_records = []
-        for i in range(total_batches):
-            batch_ref = _db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
-            batch_doc = batch_ref.get()
-            if batch_doc.exists:
-                batch_data = batch_doc.to_dict().get('data', [])
-                all_records.extend(batch_data)
+        for i in range(total_chunks):
+            chunk_ref = _db.collection(FIRESTORE_COLLECTION).document(f"chunk_{i}")
+            chunk_doc = chunk_ref.get()
+            if chunk_doc.exists:
+                chunk_b64 = chunk_doc.to_dict()['data']
+                chunk_compressed = base64.b64decode(chunk_b64)
+                chunk_json = gzip.decompress(chunk_compressed).decode('utf-8')
+                chunk_data = json.loads(chunk_json)
+                all_records.extend(chunk_data)
         
-        df = pd.DataFrame(all_records)
-        return {'df': df, 'updated_at': updated_at}
+        return {'df': pd.DataFrame(all_records), 'updated_at': updated_at}
     except Exception as e:
         st.error(f"從 Firebase 讀取失敗: {e}")
         return None
 
 # === Firebase 清除 ===
 def clear_firebase_data(db, silent=False):
-    """清除 Firestore 所有批次資料"""
+    """清除 Firestore 所有資料"""
     try:
-        meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
+        db.collection(FIRESTORE_COLLECTION).document('compressed_data').delete()
+        
+        meta_ref = db.collection(FIRESTORE_COLLECTION).document('metadata')
         meta_doc = meta_ref.get()
-        
         if meta_doc.exists:
-            meta_data = meta_doc.to_dict()
-            total_batches = meta_data.get('total_batches', 0)
-            
-            for i in range(total_batches):
-                db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}").delete()
-        
+            total_chunks = meta_doc.to_dict().get('total_chunks', 0)
+            for i in range(total_chunks):
+                db.collection(FIRESTORE_COLLECTION).document(f"chunk_{i}").delete()
         meta_ref.delete()
         return True
     except Exception as e:
@@ -381,8 +352,7 @@ def clear_firebase_data(db, silent=False):
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
-        if "聯醫" in h or "北市聯醫" in h:
-            continue
+        if "聯醫" in h or "北市聯醫" in h: continue
         for allow in allow_list:
             if allow == h or allow in h:
                 filtered.append(h)
@@ -392,13 +362,11 @@ def filter_hospitals(all_hospitals, allow_list):
 # --- 5. 主程式 ---
 def main():
     db = init_firebase()
-    
     if db is None:
-        st.error("⚠️ Firebase 連線失敗，請檢查 Secrets 設定")
+        st.error("⚠️ Firebase 連線失敗")
         return
     
     db_content = load_data_from_firebase(db)
-    
     if isinstance(db_content, dict):
         st.session_state.data = db_content.get('df')
         st.session_state.last_updated = db_content.get('updated_at', "未知")
@@ -414,10 +382,8 @@ def main():
 
     with st.sidebar:
         st.markdown("### 🗂️ 查詢目錄")
-        
         if st.session_state.last_updated:
             st.caption(f"Last updated: {st.session_state.last_updated}")
-        
         st.markdown("---")
         
         c_mode, c_pwd = st.columns([1, 2])
@@ -463,7 +429,6 @@ def main():
                 s_key = st.text_input("Keywords", value=st.session_state.qry_key, placeholder="型號 / 產品名", label_visibility="collapsed")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                
                 c1, c2 = st.columns(2)
                 with c1: btn_search = st.form_submit_button("SEARCH")
                 with c2: btn_clear = st.form_submit_button("RESET")
@@ -490,7 +455,7 @@ def main():
             if password == "197": 
                 uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
                 if uploaded_file:
-                    with st.spinner('Processing...'):
+                    with st.spinner('處理中...'):
                         if uploaded_file.name.endswith('.csv'):
                             try: df_raw = pd.read_csv(uploaded_file, header=None)
                             except: uploaded_file.seek(0); df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
@@ -499,13 +464,12 @@ def main():
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
                             update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
-                            total_batches = math.ceil(len(clean_df) / BATCH_SIZE)
                             
                             if save_data_to_firebase(db, clean_df, update_time):
                                 load_data_from_firebase.clear()
                                 st.session_state.data = clean_df
                                 st.session_state.last_updated = update_time
-                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料（分 {total_batches} 批）")
+                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料")
                                 st.rerun()
                         else: 
                             st.error(error)
@@ -539,12 +503,7 @@ def main():
                 display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼', '批價碼']
                 
                 styled_df = filtered_df[display_cols].style\
-                    .set_properties(**{
-                        'background-color': '#FFFFFF',
-                        'color': '#4A4A4A',
-                        'border-color': '#E0E0E0',
-                        'font-family': "'Lato', sans-serif"
-                    })\
+                    .set_properties(**{'background-color': '#FFFFFF', 'color': '#4A4A4A', 'border-color': '#E0E0E0', 'font-family': "'Lato', sans-serif"})\
                     .set_table_styles([
                         {'selector': 'th', 'props': [('background-color', '#F0EFEB'), ('color', '#2C3639'), ('font-family', "'Noto Serif TC', serif"), ('font-weight', 'bold'), ('border-bottom', '2px solid #6D8B74')]},
                         {'selector': 'td', 'props': [('padding', '12px 10px')]}
@@ -553,23 +512,9 @@ def main():
                 
                 st.dataframe(styled_df, use_container_width=True, hide_index=True, height=700)
             else:
-                st.markdown("""
-                    <div style="text-align: center; padding: 50px; color: #888;">
-                        <h3 style="color: #AAA;">NO RESULTS</h3>
-                        <p>請嘗試更換關鍵字或選擇其他醫院</p>
-                    </div>
-                """, unsafe_allow_html=True)
+                st.markdown('<div style="text-align: center; padding: 50px; color: #888;"><h3 style="color: #AAA;">NO RESULTS</h3><p>請嘗試更換關鍵字或選擇其他醫院</p></div>', unsafe_allow_html=True)
         else:
-            st.markdown("""
-                <div style="background-color: #FFFFFF; padding: 40px; border-radius: 8px; border: 1px solid #EAEAEA; text-align: center;">
-                    <h3 style="color: #6D8B74;">Welcome</h3>
-                    <p style="color: #666; font-size: 14px; line-height: 1.6;">
-                        請由左側選單選擇醫院或輸入關鍵字。<br>
-                        支援型號、產品名稱與院內碼的複合搜尋。
-                    </p>
-                    <hr style="width: 50px; margin: 20px auto; border-top: 2px solid #E0E0E0;">
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown('<div style="background-color: #FFFFFF; padding: 40px; border-radius: 8px; border: 1px solid #EAEAEA; text-align: center;"><h3 style="color: #6D8B74;">Welcome</h3><p style="color: #666; font-size: 14px; line-height: 1.6;">請由左側選單選擇醫院或輸入關鍵字。<br>支援型號、產品名稱與院內碼的複合搜尋。</p><hr style="width: 50px; margin: 20px auto; border-top: 2px solid #E0E0E0;"></div>', unsafe_allow_html=True)
     else:
         st.warning("⚠️ 請先於左側 Settings 上傳資料庫檔案")
 
