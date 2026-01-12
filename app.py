@@ -2,9 +2,26 @@ import streamlit as st
 import pandas as pd
 import re
 import os
-import pickle
+import json
 from datetime import datetime, timedelta
 import time
+
+# --- Firebase 初始化 ---
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+def init_firebase():
+    """初始化 Firebase（只執行一次）"""
+    if not firebase_admin._apps:
+        try:
+            # 從 Streamlit secrets 讀取 Firebase 金鑰
+            firebase_config = dict(st.secrets["firebase"])
+            cred = credentials.Certificate(firebase_config)
+            firebase_admin.initialize_app(cred)
+        except Exception as e:
+            st.error(f"Firebase 初始化失敗: {e}")
+            return None
+    return firestore.client()
 
 # --- 1. 設定頁面配置 ---
 st.set_page_config(
@@ -18,10 +35,10 @@ st.set_page_config(
 # A. 公開顯示 (南區醫院)
 PUBLIC_HOSPITALS = [
     "成大", "台南市立(秀傳)", 
-    "麻豆新樓", "臺南新樓",
+    "麻豆新樓", "臺南新樓", "安南新樓",
     "衛生福利部新營醫院", "衛生福利部嘉義醫院", "衛生福利部臺南醫院", "衛生福利部澎湖醫院",
     "奇美永康", "奇美佳里", "奇美柳營", 
-    "嘉基", "嘉義陽明", "嘉榮", "大林慈濟", "嘉義長庚",
+    "嘉基", "嘉義陽明", "嘉榮", 
     "國軍高雄", "國軍高雄總醫院屏東分院", "國軍高雄總醫院岡山分院", 
     "義大", "高雄大同(長庚)", "高雄小港(高醫)", 
     "高雄市立民生醫院", "高雄市立聯合醫院", "高雄岡山(高醫)", 
@@ -37,9 +54,9 @@ MANAGER_HOSPITALS = [
     "新店慈濟", "台北慈濟", 
     "內湖三總", "三軍總醫院", 
     "松山三總", "松山分院", 
-    "國立陽明大學",          # 6字全名
-    "國立陽明交通大學",      # 12字全名
-    "交通大學",              # 備用保險
+    "國立陽明大學",          
+    "國立陽明交通大學",      
+    "交通大學",              
     "輔大", "羅東博愛", 
     "衛生福利部臺北醫院", "部立臺北"
 ]
@@ -47,8 +64,9 @@ MANAGER_HOSPITALS = [
 # C. 合併清單
 ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
-# 資料庫路徑
-DB_FILE = 'local_database.pkl'
+# Firestore Collection 名稱
+FIRESTORE_COLLECTION = "medical_products"
+FIRESTORE_DOCUMENT = "main_database"
 
 # --- 3. CSS 樣式優化 ---
 st.markdown("""
@@ -132,14 +150,12 @@ def process_data(df):
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
             
-            # 放寬型號長度限制
             if (model_val == '' or model_val.lower() == 'nan' or 
                 '祐新' in model_val or '銀鐸' in model_val or len(model_val) > 1000):
                 continue
             
             alias_val = df.iloc[idx_alias, col_idx] if idx_alias is not None else ''
             
-            # ACP 防火牆
             if alias_val.strip().upper() == 'ACP':
                 continue
                 
@@ -160,10 +176,8 @@ def process_data(df):
         processed_list = []
 
         for row_idx, row in df.iterrows():
-            # 抓取標題欄
             row_header = str(row.iloc[header_col_idx])
             
-            # 左側雷達
             if (row_header == '' or row_header.lower() == 'nan') and header_col_idx > 0:
                 prev_val = str(row.iloc[header_col_idx - 1])
                 if prev_val and prev_val.lower() != 'nan':
@@ -173,14 +187,12 @@ def process_data(df):
             if row_header == '' or row_header.lower() == 'nan': continue
             if any(k in row_header for k in exclude_keys): continue
             
-            # === 醫院白名單過濾 ===
             hospital_name = row_header.strip()
             hospital_name = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', hospital_name)
             hospital_name = hospital_name.replace('　', ' ') 
             
             is_valid = False
             
-            # VIP 通道
             if "國立陽明" in hospital_name:
                 is_valid = True
             else:
@@ -194,19 +206,9 @@ def process_data(df):
             
             if not is_valid: continue 
 
-            # 產品資料處理
             for col_idx, p_info in products.items():
                 cell_content = str(row.iloc[col_idx])
                 
-                # === 關鍵修改：截斷邏輯再強化 ===
-                # 1. 強制轉半形 hash
-                cell_content = cell_content.replace('＃', '#')
-
-                # 2. Regex 智慧截斷：
-                # 包含 #解脫器、# 解脫器、(解脫器)、或者單純的 "解脫器" (無前綴)
-                split_pattern = r'(#\s*解脫器|[(（]解脫器[)）]|解脫器)'
-                cell_content = re.split(split_pattern, cell_content)[0]
-
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
                     pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
@@ -257,10 +259,6 @@ def process_data(df):
                             
                             if matches_with_spec:
                                 for code_raw, spec_text in matches_with_spec:
-                                    # 3. 雙重保險：括號備註包含解脫器也過濾
-                                    if spec_text and '解脫器' in spec_text:
-                                        continue
-
                                     new_item = base_item.copy()
                                     new_item['院內碼'] = code_raw.replace('#', '').strip()
                                     
@@ -289,30 +287,59 @@ def process_data(df):
     except Exception as e:
         return None, f"處理錯誤: {str(e)}"
 
-# === 儲存與讀取函式 ===
+# === Firebase 儲存與讀取函式 ===
 
-def save_data(data_dict):
-    with open(DB_FILE, 'wb') as f: pickle.dump(data_dict, f)
+def save_data_to_firebase(db, df, updated_at):
+    """將 DataFrame 存到 Firestore"""
+    try:
+        # 將 DataFrame 轉成 list of dict
+        data_records = df.to_dict('records')
+        
+        # 存入 Firestore
+        doc_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
+        doc_ref.set({
+            'data': data_records,
+            'updated_at': updated_at,
+            'record_count': len(data_records)
+        })
+        return True
+    except Exception as e:
+        st.error(f"儲存到 Firebase 失敗: {e}")
+        return False
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_data_cached(mtime):
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, 'rb') as f: return pickle.load(f)
-    return None
+@st.cache_data(ttl=300, show_spinner=False)  # 快取 5 分鐘
+def load_data_from_firebase(_db):
+    """從 Firestore 讀取資料"""
+    try:
+        doc_ref = _db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            doc_data = doc.to_dict()
+            df = pd.DataFrame(doc_data.get('data', []))
+            updated_at = doc_data.get('updated_at', '未知')
+            return {'df': df, 'updated_at': updated_at}
+        return None
+    except Exception as e:
+        st.error(f"從 Firebase 讀取失敗: {e}")
+        return None
 
-def get_data():
-    if os.path.exists(DB_FILE):
-        return load_data_cached(os.path.getmtime(DB_FILE))
-    return None
+def clear_firebase_data(db):
+    """清除 Firestore 資料"""
+    try:
+        doc_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
+        doc_ref.delete()
+        return True
+    except Exception as e:
+        st.error(f"清除 Firebase 資料失敗: {e}")
+        return False
 
 def filter_hospitals(all_hospitals, allow_list):
     filtered = []
     for h in all_hospitals:
-        # 1. 優先排除
         if "聯醫" in h or "北市聯醫" in h:
             continue
 
-        # 2. 白名單比對
         for allow in allow_list:
             if allow == h or allow in h:
                 filtered.append(h)
@@ -321,21 +348,38 @@ def filter_hospitals(all_hospitals, allow_list):
 
 # --- 5. 主程式 ---
 def main():
-    # 步驟 1: 先讀取資料
-    db_content = get_data()
+    # 初始化 Firebase
+    db = init_firebase()
     
-    # 步驟 2: 把資料存進 session_state
-    if isinstance(db_content, pd.DataFrame):
-        st.session_state.data = db_content
-        st.session_state.last_updated = "未知"
-    elif isinstance(db_content, dict):
+    if db is None:
+        st.error("⚠️ Firebase 連線失敗，請檢查 Secrets 設定")
+        st.info("""
+        請在 Streamlit Cloud Dashboard → Settings → Secrets 中加入：
+        ```toml
+        [firebase]
+        type = "service_account"
+        project_id = "你的專案ID"
+        private_key_id = "..."
+        private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+        client_email = "..."
+        client_id = "..."
+        auth_uri = "https://accounts.google.com/o/oauth2/auth"
+        token_uri = "https://oauth2.googleapis.com/token"
+        ```
+        """)
+        return
+    
+    # 讀取資料
+    db_content = load_data_from_firebase(db)
+    
+    if isinstance(db_content, dict):
         st.session_state.data = db_content.get('df')
         st.session_state.last_updated = db_content.get('updated_at', "未知")
     else:
         st.session_state.data = None
         st.session_state.last_updated = ""
 
-    # 步驟 3: 初始化其他變數
+    # 初始化其他變數
     if 'has_searched' not in st.session_state: st.session_state.has_searched = False
     if 'qry_hosp' not in st.session_state: st.session_state.qry_hosp = []
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
@@ -351,7 +395,7 @@ def main():
         
         st.markdown("---")
         
-        # 噥噥模式開關
+        # Admin 模式開關
         c_mode, c_pwd = st.columns([1, 2])
         with c_mode:
             show_manager = st.checkbox("Admin", value=st.session_state.is_manager_mode)
@@ -367,10 +411,9 @@ def main():
              st.session_state.is_manager_mode = False
              st.rerun()
 
-        if st.session_state.data is not None:
+        if st.session_state.data is not None and not st.session_state.data.empty:
             df = st.session_state.data
             all_db_hospitals = df['醫院名稱'].unique().tolist()
-            # 確保使用最新的過濾清單
             display_hosp_list = filter_hospitals(all_db_hospitals, MANAGER_HOSPITALS if st.session_state.is_manager_mode else PUBLIC_HOSPITALS)
             
             mode = st.radio("Display Mode", ["Single", "Multiple"], index=0, horizontal=True)
@@ -414,9 +457,11 @@ def main():
         # 資料維護區
         with st.expander("⚙️ Settings"):
             if st.button("Clear Database"):
-                if os.path.exists(DB_FILE): os.remove(DB_FILE)
-                load_data_cached.clear()
-                st.session_state.data = None; st.rerun()
+                if clear_firebase_data(db):
+                    load_data_from_firebase.clear()  # 清除快取
+                    st.session_state.data = None
+                    st.success("資料庫已清除")
+                    st.rerun()
 
             password = st.text_input("Key", type="password", placeholder="Upload Password")
             if password == "197": 
@@ -430,18 +475,22 @@ def main():
                         
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
-                            # 修正：加上 UTC+8 台灣時間
                             update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
-                            save_data({'df': clean_df, 'updated_at': update_time})
-                            load_data_cached.clear()
-                            st.session_state.data = clean_df; st.session_state.last_updated = update_time; st.rerun()
-                        else: st.error(error)
+                            
+                            if save_data_to_firebase(db, clean_df, update_time):
+                                load_data_from_firebase.clear()  # 清除快取
+                                st.session_state.data = clean_df
+                                st.session_state.last_updated = update_time
+                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料到 Firebase")
+                                st.rerun()
+                        else: 
+                            st.error(error)
 
     # --- 主畫面 ---
     st.markdown('<div class="main-header">醫療產品查詢系統</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Medical Product Database</div>', unsafe_allow_html=True)
 
-    if st.session_state.data is not None:
+    if st.session_state.data is not None and not st.session_state.data.empty:
         if st.session_state.has_searched:
             df = st.session_state.data
             filtered_df = df.copy()
