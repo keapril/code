@@ -1,28 +1,20 @@
 import streamlit as st
 import pandas as pd
 import re
-import os
-import json
 from datetime import datetime, timedelta
-import time
 import math
 
 # --- Firebase 初始化 ---
 import firebase_admin
-from firebase_admin import credentials, firestore, storage
+from firebase_admin import credentials, firestore
 
 def init_firebase():
     """初始化 Firebase（只執行一次）"""
     if not firebase_admin._apps:
         try:
-            # 從 Streamlit secrets 讀取 Firebase 金鑰
             firebase_config = dict(st.secrets["firebase"])
             cred = credentials.Certificate(firebase_config)
-            
-            # 設定 Storage bucket
-            firebase_admin.initialize_app(cred, {
-    'storageBucket': 'code-7a5d5.appspot.com'  # 從你的錯誤訊息看到的 project ID
-})
+            firebase_admin.initialize_app(cred)
         except Exception as e:
             st.error(f"Firebase 初始化失敗: {e}")
             return None
@@ -72,7 +64,7 @@ ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 # Firestore Collection 名稱
 FIRESTORE_COLLECTION = "medical_products"
 FIRESTORE_METADATA_DOC = "metadata"
-BATCH_SIZE = 500  # 每批筆數，確保不超過 1MB
+BATCH_SIZE = 500
 
 # --- 3. CSS 樣式優化 ---
 st.markdown("""
@@ -116,11 +108,9 @@ st.markdown("""
 # --- 4. 資料處理核心邏輯 ---
 def process_data(df):
     try:
-        # 基礎清理
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
         df = df.astype(str).apply(lambda x: x.str.strip())
         
-        # 自動偵測標題列
         header_col_idx = -1
         for c in range(min(15, df.shape[1])):
             if df.iloc[:, c].astype(str).apply(lambda x: '型號' in x).any():
@@ -151,7 +141,6 @@ def process_data(df):
         if idx_model is None:
             return None, "錯誤：找不到『型號』列。"
 
-        # 建構產品清單
         products = {}
         for col_idx in range(header_col_idx + 1, df.shape[1]):
             model_val = df.iloc[idx_model, col_idx]
@@ -293,61 +282,57 @@ def process_data(df):
     except Exception as e:
         return None, f"處理錯誤: {str(e)}"
 
-# === Firebase Storage 上傳 ===
-def upload_to_storage(file_bytes, file_name):
-    """將原始檔案上傳到 Firebase Storage（備份用）"""
-    try:
-        bucket = storage.bucket()
-        blob = bucket.blob(f"uploads/{file_name}")
-        blob.upload_from_string(file_bytes, content_type='application/octet-stream')
-        return f"uploads/{file_name}"
-    except Exception as e:
-        st.warning(f"Storage 備份失敗（不影響主功能）: {e}")
-        return None
-
-# === Firebase 分批儲存 ===
-def save_data_to_firebase(db, df, updated_at, original_file_path=None):
-    """將 DataFrame 分批存到 Firestore（避免超過 1MB 限制）"""
+# === Firebase 分批儲存（使用 batch write 優化速度）===
+def save_data_to_firebase(db, df, updated_at):
+    """將 DataFrame 分批存到 Firestore"""
     try:
         data_records = df.to_dict('records')
         total_records = len(data_records)
         total_batches = math.ceil(total_records / BATCH_SIZE)
         
-        # 先刪除舊的批次資料
+        # 先刪除舊資料
         clear_firebase_data(db, silent=True)
         
-        # 分批存入
+        # 使用 batch write
+        batch = db.batch()
+        ops_count = 0
+        
         for i in range(total_batches):
             start = i * BATCH_SIZE
             end = min(start + BATCH_SIZE, total_records)
             batch_data = data_records[start:end]
             
             doc_ref = db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
-            doc_ref.set({
+            batch.set(doc_ref, {
                 'data': batch_data,
                 'batch_index': i
             })
+            ops_count += 1
+            
+            if ops_count >= 400:
+                batch.commit()
+                batch = db.batch()
+                ops_count = 0
         
-        # 存入元資料
+        # 加入元資料
         meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
-        meta_ref.set({
+        batch.set(meta_ref, {
             'updated_at': updated_at,
             'record_count': total_records,
-            'total_batches': total_batches,
-            'original_file': original_file_path
+            'total_batches': total_batches
         })
         
+        batch.commit()
         return True
     except Exception as e:
         st.error(f"儲存到 Firebase 失敗: {e}")
         return False
 
-# === Firebase 讀取（合併所有批次）===
+# === Firebase 讀取 ===
 @st.cache_data(ttl=300, show_spinner=False)
 def load_data_from_firebase(_db):
-    """從 Firestore 讀取所有批次資料並合併"""
+    """從 Firestore 讀取所有批次資料"""
     try:
-        # 先讀取元資料
         meta_ref = _db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
         meta_doc = meta_ref.get()
         
@@ -358,7 +343,6 @@ def load_data_from_firebase(_db):
         total_batches = meta_data.get('total_batches', 0)
         updated_at = meta_data.get('updated_at', '未知')
         
-        # 讀取所有批次
         all_records = []
         for i in range(total_batches):
             batch_ref = _db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
@@ -373,11 +357,10 @@ def load_data_from_firebase(_db):
         st.error(f"從 Firebase 讀取失敗: {e}")
         return None
 
-# === Firebase 清除所有資料 ===
+# === Firebase 清除 ===
 def clear_firebase_data(db, silent=False):
     """清除 Firestore 所有批次資料"""
     try:
-        # 先讀取元資料取得批次數
         meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
         meta_doc = meta_ref.get()
         
@@ -385,11 +368,9 @@ def clear_firebase_data(db, silent=False):
             meta_data = meta_doc.to_dict()
             total_batches = meta_data.get('total_batches', 0)
             
-            # 刪除所有批次文檔
             for i in range(total_batches):
                 db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}").delete()
         
-        # 刪除元資料
         meta_ref.delete()
         return True
     except Exception as e:
@@ -402,7 +383,6 @@ def filter_hospitals(all_hospitals, allow_list):
     for h in all_hospitals:
         if "聯醫" in h or "北市聯醫" in h:
             continue
-
         for allow in allow_list:
             if allow == h or allow in h:
                 filtered.append(h)
@@ -411,28 +391,12 @@ def filter_hospitals(all_hospitals, allow_list):
 
 # --- 5. 主程式 ---
 def main():
-    # 初始化 Firebase
     db = init_firebase()
     
     if db is None:
         st.error("⚠️ Firebase 連線失敗，請檢查 Secrets 設定")
-        st.info("""
-        請在 Streamlit Cloud Dashboard → Settings → Secrets 中加入：
-        ```toml
-        [firebase]
-        type = "service_account"
-        project_id = "你的專案ID"
-        private_key_id = "..."
-        private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-        client_email = "..."
-        client_id = "..."
-        auth_uri = "[https://accounts.google.com/o/oauth2/auth](https://accounts.google.com/o/oauth2/auth)"
-        token_uri = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
-        ```
-        """)
         return
     
-    # 讀取資料
     db_content = load_data_from_firebase(db)
     
     if isinstance(db_content, dict):
@@ -442,14 +406,12 @@ def main():
         st.session_state.data = None
         st.session_state.last_updated = ""
 
-    # 初始化其他變數
     if 'has_searched' not in st.session_state: st.session_state.has_searched = False
     if 'qry_hosp' not in st.session_state: st.session_state.qry_hosp = []
     if 'qry_code' not in st.session_state: st.session_state.qry_code = ""
     if 'qry_key' not in st.session_state: st.session_state.qry_key = ""
     if 'is_manager_mode' not in st.session_state: st.session_state.is_manager_mode = False
 
-    # --- 側邊欄 ---
     with st.sidebar:
         st.markdown("### 🗂️ 查詢目錄")
         
@@ -458,7 +420,6 @@ def main():
         
         st.markdown("---")
         
-        # Admin 模式開關
         c_mode, c_pwd = st.columns([1, 2])
         with c_mode:
             show_manager = st.checkbox("Admin", value=st.session_state.is_manager_mode)
@@ -517,7 +478,6 @@ def main():
 
         st.markdown("---")
         
-        # 資料維護區
         with st.expander("⚙️ Settings"):
             if st.button("Clear Database"):
                 if clear_firebase_data(db):
@@ -531,16 +491,6 @@ def main():
                 uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
                 if uploaded_file:
                     with st.spinner('Processing...'):
-                        # 備份原始檔案到 Storage
-                        file_bytes = uploaded_file.getvalue()
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        storage_path = upload_to_storage(
-                            file_bytes, 
-                            f"{timestamp}_{uploaded_file.name}"
-                        )
-                        
-                        # 處理檔案
-                        uploaded_file.seek(0)
                         if uploaded_file.name.endswith('.csv'):
                             try: df_raw = pd.read_csv(uploaded_file, header=None)
                             except: uploaded_file.seek(0); df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
@@ -551,16 +501,15 @@ def main():
                             update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
                             total_batches = math.ceil(len(clean_df) / BATCH_SIZE)
                             
-                            if save_data_to_firebase(db, clean_df, update_time, storage_path):
+                            if save_data_to_firebase(db, clean_df, update_time):
                                 load_data_from_firebase.clear()
                                 st.session_state.data = clean_df
                                 st.session_state.last_updated = update_time
-                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料（分 {total_batches} 批存入）")
+                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料（分 {total_batches} 批）")
                                 st.rerun()
                         else: 
                             st.error(error)
 
-    # --- 主畫面 ---
     st.markdown('<div class="main-header">醫療產品查詢系統</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Medical Product Database</div>', unsafe_allow_html=True)
 
@@ -585,7 +534,6 @@ def main():
                     if k_clean: m = m | filtered_df['搜尋用字串'].str.contains(k_clean, case=False, na=False)
                     filtered_df = filtered_df[m]
 
-            # 顯示結果
             if not filtered_df.empty:
                 st.markdown(f"**Results:** {len(filtered_df)} items found")
                 display_cols = ['醫院名稱', '產品名稱', '型號', '院內碼', '批價碼']
@@ -612,7 +560,6 @@ def main():
                     </div>
                 """, unsafe_allow_html=True)
         else:
-            # 歡迎/引導畫面
             st.markdown("""
                 <div style="background-color: #FFFFFF; padding: 40px; border-radius: 8px; border: 1px solid #EAEAEA; text-align: center;">
                     <h3 style="color: #6D8B74;">Welcome</h3>
@@ -628,4 +575,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
