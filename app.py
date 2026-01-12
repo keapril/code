@@ -21,8 +21,8 @@ def init_firebase():
             
             # 設定 Storage bucket
             firebase_admin.initialize_app(cred, {
-                'storageBucket': f"{firebase_config['project_id']}.appspot.com"
-            })
+    'storageBucket': 'code-7a5d5.appspot.com'  # 從你的錯誤訊息看到的 project ID
+})
         except Exception as e:
             st.error(f"Firebase 初始化失敗: {e}")
             return None
@@ -628,3 +628,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
