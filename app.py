@@ -5,10 +5,11 @@ import os
 import json
 from datetime import datetime, timedelta
 import time
+import math
 
 # --- Firebase 初始化 ---
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 
 def init_firebase():
     """初始化 Firebase（只執行一次）"""
@@ -17,7 +18,11 @@ def init_firebase():
             # 從 Streamlit secrets 讀取 Firebase 金鑰
             firebase_config = dict(st.secrets["firebase"])
             cred = credentials.Certificate(firebase_config)
-            firebase_admin.initialize_app(cred)
+            
+            # 設定 Storage bucket
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': f"{firebase_config['project_id']}.appspot.com"
+            })
         except Exception as e:
             st.error(f"Firebase 初始化失敗: {e}")
             return None
@@ -66,7 +71,8 @@ ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
 # Firestore Collection 名稱
 FIRESTORE_COLLECTION = "medical_products"
-FIRESTORE_DOCUMENT = "main_database"
+FIRESTORE_METADATA_DOC = "metadata"
+BATCH_SIZE = 500  # 每批筆數，確保不超過 1MB
 
 # --- 3. CSS 樣式優化 ---
 st.markdown("""
@@ -287,51 +293,108 @@ def process_data(df):
     except Exception as e:
         return None, f"處理錯誤: {str(e)}"
 
-# === Firebase 儲存與讀取函式 ===
-
-def save_data_to_firebase(db, df, updated_at):
-    """將 DataFrame 存到 Firestore"""
+# === Firebase Storage 上傳 ===
+def upload_to_storage(file_bytes, file_name):
+    """將原始檔案上傳到 Firebase Storage（備份用）"""
     try:
-        # 將 DataFrame 轉成 list of dict
+        bucket = storage.bucket()
+        blob = bucket.blob(f"uploads/{file_name}")
+        blob.upload_from_string(file_bytes, content_type='application/octet-stream')
+        return f"uploads/{file_name}"
+    except Exception as e:
+        st.warning(f"Storage 備份失敗（不影響主功能）: {e}")
+        return None
+
+# === Firebase 分批儲存 ===
+def save_data_to_firebase(db, df, updated_at, original_file_path=None):
+    """將 DataFrame 分批存到 Firestore（避免超過 1MB 限制）"""
+    try:
         data_records = df.to_dict('records')
+        total_records = len(data_records)
+        total_batches = math.ceil(total_records / BATCH_SIZE)
         
-        # 存入 Firestore
-        doc_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
-        doc_ref.set({
-            'data': data_records,
+        # 先刪除舊的批次資料
+        clear_firebase_data(db, silent=True)
+        
+        # 分批存入
+        for i in range(total_batches):
+            start = i * BATCH_SIZE
+            end = min(start + BATCH_SIZE, total_records)
+            batch_data = data_records[start:end]
+            
+            doc_ref = db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
+            doc_ref.set({
+                'data': batch_data,
+                'batch_index': i
+            })
+        
+        # 存入元資料
+        meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
+        meta_ref.set({
             'updated_at': updated_at,
-            'record_count': len(data_records)
+            'record_count': total_records,
+            'total_batches': total_batches,
+            'original_file': original_file_path
         })
+        
         return True
     except Exception as e:
         st.error(f"儲存到 Firebase 失敗: {e}")
         return False
 
-@st.cache_data(ttl=300, show_spinner=False)  # 快取 5 分鐘
+# === Firebase 讀取（合併所有批次）===
+@st.cache_data(ttl=300, show_spinner=False)
 def load_data_from_firebase(_db):
-    """從 Firestore 讀取資料"""
+    """從 Firestore 讀取所有批次資料並合併"""
     try:
-        doc_ref = _db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
-        doc = doc_ref.get()
+        # 先讀取元資料
+        meta_ref = _db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
+        meta_doc = meta_ref.get()
         
-        if doc.exists:
-            doc_data = doc.to_dict()
-            df = pd.DataFrame(doc_data.get('data', []))
-            updated_at = doc_data.get('updated_at', '未知')
-            return {'df': df, 'updated_at': updated_at}
-        return None
+        if not meta_doc.exists:
+            return None
+        
+        meta_data = meta_doc.to_dict()
+        total_batches = meta_data.get('total_batches', 0)
+        updated_at = meta_data.get('updated_at', '未知')
+        
+        # 讀取所有批次
+        all_records = []
+        for i in range(total_batches):
+            batch_ref = _db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}")
+            batch_doc = batch_ref.get()
+            if batch_doc.exists:
+                batch_data = batch_doc.to_dict().get('data', [])
+                all_records.extend(batch_data)
+        
+        df = pd.DataFrame(all_records)
+        return {'df': df, 'updated_at': updated_at}
     except Exception as e:
         st.error(f"從 Firebase 讀取失敗: {e}")
         return None
 
-def clear_firebase_data(db):
-    """清除 Firestore 資料"""
+# === Firebase 清除所有資料 ===
+def clear_firebase_data(db, silent=False):
+    """清除 Firestore 所有批次資料"""
     try:
-        doc_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_DOCUMENT)
-        doc_ref.delete()
+        # 先讀取元資料取得批次數
+        meta_ref = db.collection(FIRESTORE_COLLECTION).document(FIRESTORE_METADATA_DOC)
+        meta_doc = meta_ref.get()
+        
+        if meta_doc.exists:
+            meta_data = meta_doc.to_dict()
+            total_batches = meta_data.get('total_batches', 0)
+            
+            # 刪除所有批次文檔
+            for i in range(total_batches):
+                db.collection(FIRESTORE_COLLECTION).document(f"batch_{i}").delete()
+        
+        # 刪除元資料
+        meta_ref.delete()
         return True
     except Exception as e:
-        st.error(f"清除 Firebase 資料失敗: {e}")
+        if not silent:
+            st.error(f"清除 Firebase 資料失敗: {e}")
         return False
 
 def filter_hospitals(all_hospitals, allow_list):
@@ -363,8 +426,8 @@ def main():
         private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
         client_email = "..."
         client_id = "..."
-        auth_uri = "https://accounts.google.com/o/oauth2/auth"
-        token_uri = "https://oauth2.googleapis.com/token"
+        auth_uri = "[https://accounts.google.com/o/oauth2/auth](https://accounts.google.com/o/oauth2/auth)"
+        token_uri = "[https://oauth2.googleapis.com/token](https://oauth2.googleapis.com/token)"
         ```
         """)
         return
@@ -458,7 +521,7 @@ def main():
         with st.expander("⚙️ Settings"):
             if st.button("Clear Database"):
                 if clear_firebase_data(db):
-                    load_data_from_firebase.clear()  # 清除快取
+                    load_data_from_firebase.clear()
                     st.session_state.data = None
                     st.success("資料庫已清除")
                     st.rerun()
@@ -468,6 +531,16 @@ def main():
                 uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
                 if uploaded_file:
                     with st.spinner('Processing...'):
+                        # 備份原始檔案到 Storage
+                        file_bytes = uploaded_file.getvalue()
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        storage_path = upload_to_storage(
+                            file_bytes, 
+                            f"{timestamp}_{uploaded_file.name}"
+                        )
+                        
+                        # 處理檔案
+                        uploaded_file.seek(0)
                         if uploaded_file.name.endswith('.csv'):
                             try: df_raw = pd.read_csv(uploaded_file, header=None)
                             except: uploaded_file.seek(0); df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
@@ -476,12 +549,13 @@ def main():
                         clean_df, error = process_data(df_raw)
                         if clean_df is not None:
                             update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+                            total_batches = math.ceil(len(clean_df) / BATCH_SIZE)
                             
-                            if save_data_to_firebase(db, clean_df, update_time):
-                                load_data_from_firebase.clear()  # 清除快取
+                            if save_data_to_firebase(db, clean_df, update_time, storage_path):
+                                load_data_from_firebase.clear()
                                 st.session_state.data = clean_df
                                 st.session_state.last_updated = update_time
-                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料到 Firebase")
+                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料（分 {total_batches} 批存入）")
                                 st.rerun()
                         else: 
                             st.error(error)
