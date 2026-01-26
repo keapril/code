@@ -10,8 +10,7 @@ build/
 dist/
 
 # Streamlit
-config/.streamlit/secrets.toml
-.streamlit/secrets.toml
+**/secrets.toml
 
 # Firebase
 config/.firebase/
