@@ -239,8 +239,16 @@ def process_data(df):
                                         if spec_text:
                                             d_match = re.search(r'(\d{2,4})[/\.](\d{1,2})(?:[/\.](\d{1,2}))?', spec_text)
                                             if d_match:
-                                                y = int(d_match.group(1)); m = int(d_match.group(2)); d = int(d_match.group(3)) if d_match.group(3) else 1
-                                                if y < 100: y += 2000 
+                                                y = int(d_match.group(1))
+                                                m = int(d_match.group(2))
+                                                d = int(d_match.group(3)) if d_match.group(3) else 1
+                                                
+                                                # Bug 修復：民國年轉換邏輯
+                                                if 10 <= y < 1000:  # 民國年範圍 (10-999)
+                                                    y += 1911  # 轉換為西元年
+                                                elif y < 100:  # 兩位數西元年 (00-99)
+                                                    y += 2000
+                                                
                                                 date_val = y * 10000 + m * 100 + d
                                         dated_matches.append((code_raw, spec_text, date_val))
                                     
