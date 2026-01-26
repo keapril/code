@@ -294,17 +294,34 @@ def process_data(df):
                     # 為每個拆分後的產品型號建立對應的項目
                     for p_entry in p_info['entries']:
                         for match in found_relevant_matches:
-                            final_item = {
-                                '醫院名稱': hospital_name,
-                                '型號': match['額外型號'] if match['額外型號'] else p_entry['name'],
-                                '產品名稱': p_info['產品名稱'],
-                                '健保碼': p_info['健保碼'],
-                                '院內碼': match['院內碼'],
-                                '批價碼': match['批價碼'], 
-                                '原始備註': cell_content,
-                                '搜尋用字串': p_entry['search_string'] + (f" {match['額外型號'].lower()}" if match['額外型號'] else "")
-                            }
-                            processed_list.append(final_item)
+                            # Bug 修復：如果院內碼有額外型號，只為該額外型號建立項目
+                            if match.get('額外型號'):
+                                # 有額外型號時，直接使用該型號，不與產品型號交叉
+                                final_item = {
+                                    '醫院名稱': hospital_name,
+                                    '型號': match['額外型號'],
+                                    '產品名稱': p_info['產品名稱'],
+                                    '健保碼': p_info['健保碼'],
+                                    '院內碼': match['院內碼'],
+                                    '批價碼': match.get('批價碼', ''), 
+                                    '原始備註': cell_content,
+                                    '搜尋用字串': f"{match['額外型號']} {match['額外型號'].lower()} {p_info['產品名稱']} {p_info['健保碼']}".lower()
+                                }
+                                processed_list.append(final_item)
+                                break  # 有額外型號時，不再處理其他產品型號
+                            else:
+                                # 沒有額外型號時，使用產品型號
+                                final_item = {
+                                    '醫院名稱': hospital_name,
+                                    '型號': p_entry['name'],
+                                    '產品名稱': p_info['產品名稱'],
+                                    '健保碼': p_info['健保碼'],
+                                    '院內碼': match['院內碼'],
+                                    '批價碼': match.get('批價碼', ''), 
+                                    '原始備註': cell_content,
+                                    '搜尋用字串': p_entry['search_string']
+                                }
+                                processed_list.append(final_item)
 
         return pd.DataFrame(processed_list), None
 
