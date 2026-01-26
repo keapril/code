@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.Python
+build/
+dist/
+
+# Streamlit
+config/.streamlit/secrets.toml
+.streamlit/secrets.toml
+
+# Firebase
+config/.firebase/
+*.json
+!*.example.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.agent/
+
+# 備份
+*_backup_*/
+_archive/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
