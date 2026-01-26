@@ -281,9 +281,9 @@ def process_data(df):
                                                 if not re.search(r'[\u4e00-\u9fff]', pure_spec):
                                                     item_data['額外型號'] = pure_spec
                                         found_relevant_matches.append(item_data)
-                            else:
-                                for code in all_matches:
-                                    found_relevant_matches.append({'院內碼': code.replace('#', '').strip(), '批價碼': '', '額外型號': None})
+                                else:
+                                    for code in all_matches:
+                                        found_relevant_matches.append({'院內碼': code.replace('#', '').strip(), '批價碼': '', '額外型號': None})
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': '', '額外型號': None}]
 
