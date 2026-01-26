@@ -252,10 +252,14 @@ def process_data(df):
                                                 date_val = y * 10000 + m * 100 + d
                                         dated_matches.append((code_raw, spec_text, date_val))
                                     
-                                    if any(m[2] > 0 for m in dated_matches):
-                                        best_match = sorted(dated_matches, key=lambda x: x[2], reverse=True)[0]
+                                    # Bug 修復：優先選擇「有日期」的代碼，並在其中選最新的
+                                    has_date = [m for m in dated_matches if m[2] > 0]
+                                    if has_date:
+                                        # 有日期的代碼中，選擇日期最新的
+                                        best_match = sorted(has_date, key=lambda x: x[2], reverse=True)[0]
                                         relevant_raw = [(best_match[0], best_match[1])]
                                     else:
+                                        # 都沒有日期，選最後一個
                                         relevant_raw = [matches_with_spec[-1]]
                                 else:
                                     relevant_raw = matches_with_spec
