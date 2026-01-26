@@ -228,62 +228,66 @@ def process_data(df):
                                 '額外型號': spec_model_update
                             }]
                         else:
-                            # 將儲存格內容按行拆分，逐行解析院內碼與日期
-                            lines = cell_content.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-                            code_date_pairs = []
+                            # 使用正則表達式同時捕獲院內碼及其後的所有括號內容
+                            # 例如：#1809411(610132)(祐新) 會捕獲到 1809411 和 (610132)(祐新)
+                            pattern_with_brackets = r'#\s*([A-Za-z0-9\-\.\_]+)((?:\s*\([^)]*\))*)'
+                            matches = re.findall(pattern_with_brackets, cell_content)
                             
-                            for line in lines:
-                                # 在每一行中尋找院內碼
-                                codes_in_line = re.findall(r'#\s*([A-Za-z0-9\-\.\_]+)', line)
-                                
-                                # 在同一行中尋找日期
-                                date_val = 0
-                                d_match = re.search(r'(\d{2,4})[/\.](\d{1,2})(?:[/\.](\d{1,2}))?', line)
-                                if d_match:
-                                    y = int(d_match.group(1))
-                                    m = int(d_match.group(2))
-                                    d = int(d_match.group(3)) if d_match.group(3) else 1
+                            if matches:
+                                for code, brackets_text in matches:
+                                    code = code.strip()
                                     
-                                    # 民國年轉換
-                                    if 10 <= y < 1000:
-                                        y += 1911
-                                    elif y < 100:
-                                        y += 2000
+                                    # 提取所有括號內的內容
+                                    bracket_contents = re.findall(r'\(([^)]+)\)', brackets_text)
                                     
-                                    date_val = y * 10000 + m * 100 + d
-                                
-                                # 將該行的所有院內碼與日期配對
-                                for code in codes_in_line:
-                                    code_date_pairs.append((code.strip(), date_val, line))
-                            
-                            if code_date_pairs:
-                                # 優先選擇有日期的院內碼，並在其中選最新的
-                                has_date = [p for p in code_date_pairs if p[1] > 0]
-                                if has_date:
-                                    best_pair = sorted(has_date, key=lambda x: x[1], reverse=True)[0]
-                                    found_relevant_matches.append({'院內碼': best_pair[0], '批價碼': '', '額外型號': None})
-                                else:
-                                    # 都沒有日期，選第一個
-                                    found_relevant_matches.append({'院內碼': code_date_pairs[0][0], '批價碼': '', '額外型號': None})
-                            else:
-                                # 如果沒有找到任何院內碼，使用舊邏輯
-                                pattern_with_spec = r'(#\s*[A-Za-z0-9\-\.\_]+)(?:\s*[\n\r]*\(([^)]+)\))?'
-                                matches_with_spec = re.findall(pattern_with_spec, cell_content)
-                                
-                                if matches_with_spec:
-                                    for code_raw, spec_text in matches_with_spec:
-                                        item_data = {'院內碼': code_raw.replace('#', '').strip(), '批價碼': '', '額外型號': None}
-                                        if spec_text:
-                                            spec_text = spec_text.strip()
-                                            exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
-                                            if not any(k in spec_text for k in exclude_spec) and len(spec_text) < 50:
-                                                pure_spec = spec_text.split()[0]
-                                                if not re.search(r'[\u4e00-\u9fff]', pure_spec):
-                                                    item_data['額外型號'] = pure_spec
-                                        found_relevant_matches.append(item_data)
-                                else:
-                                    for code in all_matches:
-                                        found_relevant_matches.append({'院內碼': code.replace('#', '').strip(), '批價碼': '', '額外型號': None})
+                                    # 尋找日期
+                                    date_val = 0
+                                    for bracket in bracket_contents:
+                                        d_match = re.search(r'(\d{2,4})[/\.](\d{1,2})(?:[/\.](\d{1,2}))?', bracket)
+                                        if d_match:
+                                            y = int(d_match.group(1))
+                                            m = int(d_match.group(2))
+                                            d = int(d_match.group(3)) if d_match.group(3) else 1
+                                            
+                                            # 民國年轉換
+                                            if 10 <= y < 1000:
+                                                y += 1911
+                                            elif y < 100:
+                                                y += 2000
+                                            
+                                            date_val = y * 10000 + m * 100 + d
+                                            break
+                                    
+                                    # 提取額外型號（排除日期、中文、特定關鍵字）
+                                    extra_model = None
+                                    exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
+                                    
+                                    for bracket in bracket_contents:
+                                        bracket = bracket.strip()
+                                        # 跳過包含排除關鍵字的括號
+                                        if any(k in bracket for k in exclude_spec):
+                                            continue
+                                        # 跳過日期格式
+                                        if re.search(r'\d{2,4}[/\.]\d{1,2}', bracket):
+                                            continue
+                                        # 跳過包含中文的
+                                        if re.search(r'[\u4e00-\u9fff]', bracket):
+                                            continue
+                                        # 跳過過長的內容
+                                        if len(bracket) > 50:
+                                            continue
+                                        
+                                        # 這應該是額外型號
+                                        extra_model = bracket.split()[0] if bracket else None
+                                        break
+                                    
+                                    # 建立項目
+                                    found_relevant_matches.append({
+                                        '院內碼': code,
+                                        '批價碼': '',
+                                        '額外型號': extra_model,
+                                        '日期': date_val
+                                    })
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': '', '額外型號': None}]
 
