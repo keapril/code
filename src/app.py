@@ -53,6 +53,7 @@ R2_METADATA_PATH = "metadata.json"
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700&family=Lato:wght@300;400;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
     :root {
         --bg-color: #F9F9F7;
@@ -70,7 +71,7 @@ st.markdown("""
     [data-testid="stSidebar"] { background-color: var(--sidebar-bg); border-right: 1px solid #E5E5E5; }
     
     /* 確保 Material Symbols 圖示正常顯示 */
-    .stApp [data-testid="stIconMaterial"], .stApp i {
+    .stApp [data-testid="stIconMaterial"], .stApp i, .stApp span[class*="material"] {
         font-family: 'Material Symbols Outlined' !important;
     }
     h1, h2, h3 { font-family: var(--font-serif) !important; color: #2C3639 !important; font-weight: 700; letter-spacing: 0.05em; }
@@ -210,7 +211,8 @@ def process_data(df):
                 
                 if cell_content and str(cell_content).strip() != '' and str(cell_content).lower() != 'nan':
                     
-                    pattern = r'(#\s*[A-Za-z0-9\-\.\_]+)'
+                    # 支援 # 和 $ 兩種符號（$ 通常代表價格，但後面可能跟著日期）
+                    pattern = r'([#$]\s*[A-Za-z0-9\-\.\_]+)'
                     all_matches = re.findall(pattern, cell_content)
                     
                     found_relevant_matches = []
@@ -221,7 +223,7 @@ def process_data(df):
                             spec_model_update = None
                             
                             for code in all_matches:
-                                clean_code = code.replace('#', '').strip()
+                                clean_code = code.replace('#', '').replace('$', '').strip()
                                 if clean_code.upper().startswith('B'):
                                     hosp_codes.append(clean_code)
                                 elif clean_code[0].isdigit(): 
@@ -235,29 +237,36 @@ def process_data(df):
                                 '額外型號': spec_model_update
                             }]
                         else:
-                            # 使用正則表達式同時捕獲院內碼及其後的所有括號內容
-                            # 例如：#1809411(610132)(祐新) 會捕獲到 1809411 和 (610132)(祐新)
-                            pattern_with_brackets = r'#\s*([A-Za-z0-9\-\.\\_]+)((?:\s*\([^)]*\))*)'
-                            matches = re.findall(pattern_with_brackets, cell_content)
+                            # 改進的正則表達式：同時捕獲 # 或 $ 開頭的代碼及其後的所有內容
+                            # 例如：#21869302\n$40350(113/8/7議價;CR) 會分別捕獲
+                            pattern_with_context = r'([#$])\s*([A-Za-z0-9\-\.\_]+)([^#$]*?)(?=[#$]|$)'
+                            matches = re.findall(pattern_with_context, cell_content, re.DOTALL)
                             
-                            # 收集所有院內碼候選項（包含日期資訊）
+                            # 收集所有院內碼候選項（包含日期與價格資訊）
                             all_code_candidates = []
                             
                             if matches:
-                                for code, brackets_text in matches:
+                                for symbol, code, context_text in matches:
                                     code = code.strip()
                                     
-                                    # 提取所有括號內的內容
-                                    bracket_contents = re.findall(r'\(([^)]+)\)', brackets_text)
+                                    # 只處理 # 開頭的院內碼，$ 開頭的是價格（但可能包含日期資訊）
+                                    if symbol != '#':
+                                        continue
                                     
-                                    # 尋找日期
+                                    # 提取所有括號內的內容（從院內碼後面的文字）
+                                    bracket_contents = re.findall(r'\(([^)]+)\)', context_text)
+                                    
+                                    # 尋找日期（優先從後續的 $ 價格行尋找）
                                     date_val = 0
-                                    for bracket in bracket_contents:
-                                        d_match = re.search(r'(\d{2,4})[/\.](\d{1,2})(?:[/\.](\d{1,2}))?', bracket)
-                                        if d_match:
-                                            y = int(d_match.group(1))
-                                            m = int(d_match.group(2))
-                                            d = int(d_match.group(3)) if d_match.group(3) else 1
+                                    
+                                    # 先在後續文字中尋找日期（包含 $ 價格行）
+                                    all_dates = re.findall(r'(\d{2,4})[/\.](\d{1,2})[/\.](\d{1,2})', context_text)
+                                    if all_dates:
+                                        # 取最新的日期
+                                        for y_str, m_str, d_str in all_dates:
+                                            y = int(y_str)
+                                            m = int(m_str)
+                                            d = int(d_str)
                                             
                                             # 民國年轉換
                                             if 10 <= y < 1000:
@@ -265,12 +274,13 @@ def process_data(df):
                                             elif y < 100:
                                                 y += 2000
                                             
-                                            date_val = y * 10000 + m * 100 + d
-                                            break
+                                            current_date = y * 10000 + m * 100 + d
+                                            if current_date > date_val:
+                                                date_val = current_date
                                     
                                     # 提取額外型號（排除日期、中文、特定關鍵字）
                                     extra_model = None
-                                    exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp']
+                                    exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp', 'CR', 'USA']
                                     
                                     for bracket in bracket_contents:
                                         bracket = bracket.strip()
@@ -286,6 +296,9 @@ def process_data(df):
                                         # 跳過過長的內容
                                         if len(bracket) > 50:
                                             continue
+                                        # 跳過純數字（可能是價格）
+                                        if bracket.isdigit():
+                                            continue
                                         
                                         # 這應該是額外型號
                                         extra_model = bracket.split()[0] if bracket else None
@@ -300,17 +313,19 @@ def process_data(df):
                                     })
                             
                             # 優先選擇策略：
-                            # 1. 如果有帶日期的院內碼，選擇日期最新的那一個
-                            # 2. 如果都沒有日期，則全部保留
+                            # 1. 優先選擇有日期的院內碼，並選擇日期最新的那一個
+                            # 2. 如果都沒有日期，只保留第一個（避免重複）
                             codes_with_date = [c for c in all_code_candidates if c['日期'] > 0]
                             
                             if codes_with_date:
                                 # 選擇日期最新的院內碼
                                 best_code = max(codes_with_date, key=lambda x: x['日期'])
                                 found_relevant_matches = [best_code]
+                            elif all_code_candidates:
+                                # 都沒有日期，只保留第一個避免重複
+                                found_relevant_matches = [all_code_candidates[0]]
                             else:
-                                # 都沒有日期，保留所有
-                                found_relevant_matches = all_code_candidates
+                                found_relevant_matches = []
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': '', '額外型號': None}]
 
