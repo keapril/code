@@ -265,21 +265,10 @@ def process_data(df):
                                             if current_date > date_val:
                                                 date_val = current_date
                                     
-                                    # 提取括號內的潛在型號
-                                    potential_model = None
-                                    bracket_contents = re.findall(r'\(([^)]+)\)', context_text)
-                                    for bracket_text in bracket_contents:
-                                        bracket_text = bracket_text.strip()
-                                        if (re.match(r'^[A-Za-z0-9\-]+$', bracket_text) and 
-                                            not re.match(r'^\d{2,4}[/\.]\d{1,2}', bracket_text)):
-                                            potential_model = bracket_text
-                                            break
-                                    
                                     all_code_candidates.append({
                                         '院內碼': code,
                                         '批價碼': '',
-                                        '日期': date_val,
-                                        '括號型號': potential_model
+                                        '日期': date_val
                                     })
                             
                             # 優先選擇策略：
@@ -301,45 +290,22 @@ def process_data(df):
                         found_relevant_matches = [{'院內碼': '', '批價碼': ''}]
 
                     # 為每個拆分後的產品型號建立對應的項目
-                    # 使用括號型號進行精確配對
                     for p_entry in p_info['entries']:
                         for match in found_relevant_matches:
                             if not match.get('院內碼'):
                                 continue
                             
-                            # 檢查是否有括號內的型號
-                            bracket_model = match.get('括號型號')
-                            
-                            if bracket_model:
-                                # 有括號型號：只有當括號型號與產品型號吻合時才配對
-                                # 例如：#1809411(610132) 只配對型號 610132
-                                if bracket_model == p_entry['name']:
-                                    final_item = {
-                                        '醫院名稱': hospital_name,
-                                        '型號': p_entry['name'],
-                                        '產品名稱': p_info['產品名稱'],
-                                        '健保碼': p_info['健保碼'],
-                                        '院內碼': match['院內碼'],
-                                        '批價碼': match.get('批價碼', ''), 
-                                        '原始備註': cell_content,
-                                        '搜尋用字串': p_entry['search_string']
-                                    }
-                                    processed_list.append(final_item)
-                                # else: 型號不吻合，跳過此配對
-                            else:
-                                # 沒有括號型號：配對所有產品型號
-                                # 例如：#21869302（高醫）配對所有該醫院使用的型號
-                                final_item = {
-                                    '醫院名稱': hospital_name,
-                                    '型號': p_entry['name'],
-                                    '產品名稱': p_info['產品名稱'],
-                                    '健保碼': p_info['健保碼'],
-                                    '院內碼': match['院內碼'],
-                                    '批價碼': match.get('批價碼', ''), 
-                                    '原始備註': cell_content,
-                                    '搜尋用字串': p_entry['search_string']
-                                }
-                                processed_list.append(final_item)
+                            final_item = {
+                                '醫院名稱': hospital_name,
+                                '型號': p_entry['name'],
+                                '產品名稱': p_info['產品名稱'],
+                                '健保碼': p_info['健保碼'],
+                                '院內碼': match['院內碼'],
+                                '批價碼': match.get('批價碼', ''), 
+                                '原始備註': cell_content,
+                                '搜尋用字串': p_entry['search_string']
+                            }
+                            processed_list.append(final_item)
 
 
         # 去除完全重複的項目（可能因為多個產品欄位導致）
