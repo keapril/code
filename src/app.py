@@ -332,7 +332,8 @@ def process_data(df):
                                         '院內碼': match['院內碼'],
                                         '批價碼': match.get('批價碼', ''), 
                                         '原始備註': cell_content,
-                                        '搜尋用字串': p_entry['search_string']
+                                        '搜尋用字串': p_entry['search_string'],
+                                        '日期': match.get('日期', 0)
                                     }
                                     processed_list.append(final_item)
                                 # else: 型號不吻合，跳過
@@ -347,7 +348,8 @@ def process_data(df):
                                     '院內碼': match['院內碼'],
                                     '批價碼': match.get('批價碼', ''), 
                                     '原始備註': cell_content,
-                                    '搜尋用字串': p_entry['search_string']
+                                    '搜尋用字串': p_entry['search_string'],
+                                    '日期': match.get('日期', 0)
                                 }
                                 processed_list.append(final_item)
 
@@ -355,8 +357,16 @@ def process_data(df):
         # 去除完全重複的項目（可能因為多個產品欄位導致）
         df_result = pd.DataFrame(processed_list)
         if not df_result.empty:
-            # 根據關鍵欄位去重：醫院名稱 + 型號 + 院內碼
-            df_result = df_result.drop_duplicates(subset=['醫院名稱', '型號', '院內碼', '產品名稱'], keep='first')
+            # 先根據「醫院+產品+型號」分組，每組只保留日期最新的院內碼
+            # 這樣可以確保高醫等醫院不會顯示舊的院內碼
+            df_result = df_result.sort_values('日期', ascending=False)
+            df_result = df_result.drop_duplicates(
+                subset=['醫院名稱', '產品名稱', '型號'], 
+                keep='first'  # 保留第一個（日期最新）
+            )
+            # 移除日期欄位（不需要顯示給使用者）
+            if '日期' in df_result.columns:
+                df_result = df_result.drop(columns=['日期'])
         
         return df_result, None
 
