@@ -237,58 +237,44 @@ def process_data(df):
                                 '額外型號': spec_model_update
                             }]
                         else:
-                            # 改進的正則表達式：同時捕獲 # 或 $ 開頭的代碼及其後的所有內容
-                            # 例如：#21869302\n$40350(113/8/7議價;CR) 會分別捕獲
-                            pattern_with_context = r'([#$])\s*([A-Za-z0-9\-\.\_]+)([^#$]*?)(?=[#$]|$)'
-                            matches = re.findall(pattern_with_context, cell_content, re.DOTALL)
+                            # 以 # 為分界點，將內容切分為多個院內碼區塊
+                            # 這樣可以確保 #院內碼 之後的所有內容（包含 $ 價格行）都被歸類到該院內碼下
+                            # 例如：#21869302\n$40350(113/8/7議價) 會被視為一個區塊
+                            pattern_blocks = r'#\s*([A-Za-z0-9\-\.\_]+)([^#]*?)(?=#|$)'
+                            matches = re.findall(pattern_blocks, cell_content, re.DOTALL)
                             
-                            # 收集所有院內碼候選項（包含日期與價格資訊）
+                            # 收集所有院內碼候選項
                             all_code_candidates = []
                             
                             if matches:
-                                for symbol, code, context_text in matches:
+                                for code, context_text in matches:
                                     code = code.strip()
                                     
-                                    # 只處理 # 開頭的院內碼，$ 開頭的是價格（但可能包含日期資訊）
-                                    if symbol != '#':
-                                        continue
-                                    
-                                    # 尋找日期（優先從後續的 $ 價格行尋找）
+                                    # 尋找日期（遍歷該區塊內的所有內容，包含 $ 價格行）
+                                    # 增強型正則：支援空格、點號、斜線、橫線，例如 113 / 8 / 7 或 113.8.7
                                     date_val = 0
-                                    
-                                    # 在後續文字中尋找日期（包含 $ 價格行）
-                                    all_dates = re.findall(r'(\d{2,4})[/\.](\d{1,2})[/\.](\d{1,2})', context_text)
+                                    all_dates = re.findall(r'(\d{2,4})\s*[/\.\-]\s*(\d{1,2})\s*[/\.\-]\s*(\d{1,2})', context_text)
                                     if all_dates:
-                                        # 取最新的日期
                                         for y_str, m_str, d_str in all_dates:
                                             y = int(y_str)
                                             m = int(m_str)
                                             d = int(d_str)
-                                            
-                                            # 民國年轉換
-                                            if 10 <= y < 1000:
-                                                y += 1911
-                                            elif y < 100:
-                                                y += 2000
-                                            
+                                            if 10 <= y < 1000: y += 1911
+                                            elif y < 100: y += 2000
                                             current_date = y * 10000 + m * 100 + d
                                             if current_date > date_val:
                                                 date_val = current_date
                                     
                                     # 提取括號內的潛在型號
-                                    # 例如：#1809411(610132)(祐新) → 提取 610132
                                     potential_model = None
                                     bracket_contents = re.findall(r'\(([^)]+)\)', context_text)
                                     for bracket_text in bracket_contents:
                                         bracket_text = bracket_text.strip()
-                                        # 檢查是否為型號：字母數字組合，非日期，非純中文
-                                        # 排除日期格式 (例如 114/6/2)
                                         if (re.match(r'^[A-Za-z0-9\-]+$', bracket_text) and 
                                             not re.match(r'^\d{2,4}[/\.]\d{1,2}', bracket_text)):
                                             potential_model = bracket_text
-                                            break  # 取第一個符合的型號
+                                            break
                                     
-                                    # 收集候選項（包含括號內的潛在型號）
                                     all_code_candidates.append({
                                         '院內碼': code,
                                         '批價碼': '',
@@ -383,7 +369,7 @@ def get_r2_fs():
         st.error(f"R2 連線配置錯誤: {e}")
         return None, None
 
-def save_data_to_r2(df, updated_at):
+def save_data_to_r2(df, updated_at, file_name):
     """將 DataFrame 轉為 Parquet 上傳至 R2"""
     fs, bucket = get_r2_fs()
     if not fs: return False
@@ -398,6 +384,7 @@ def save_data_to_r2(df, updated_at):
         meta_key = f"{bucket}/{R2_METADATA_PATH}"
         metadata = {
             'updated_at': updated_at,
+            'file_name': file_name,
             'record_count': len(df)
         }
         with fs.open(meta_key, 'w') as f:
@@ -427,7 +414,11 @@ def load_data_from_r2():
             with fs.open(parquet_key, 'rb') as f:
                 df = pd.read_parquet(f, engine='pyarrow')
                 
-            return {'df': df, 'updated_at': meta.get('updated_at', '未知')}
+            return {
+                'df': df, 
+                'updated_at': meta.get('updated_at', '未知'),
+                'file_name': meta.get('file_name', '未知檔案')
+            }
         return None
     except Exception as e:
         st.error(f"從 R2 讀取失敗: {e}")
@@ -461,15 +452,16 @@ def filter_hospitals(all_hospitals, allow_list):
 
 # --- 5. 主程式 ---
 def main():
-    # 讀取資料
-    db_content = load_data_from_r2()
-    
-    if isinstance(db_content, dict):
-        st.session_state.data = db_content.get('df')
-        st.session_state.last_updated = db_content.get('updated_at', "未知")
-    else:
-        st.session_state.data = None
-        st.session_state.last_updated = ""
+    if 'data' not in st.session_state:
+        db_content = load_data_from_r2()
+        if isinstance(db_content, dict):
+            st.session_state.data = db_content.get('df')
+            st.session_state.last_updated = db_content.get('updated_at', "未知")
+            st.session_state.file_version = db_content.get('file_name', "未知版本")
+        else:
+            st.session_state.data = None
+            st.session_state.last_updated = ""
+            st.session_state.file_version = ""
 
     # 初始化其他變數
     if 'has_searched' not in st.session_state: st.session_state.has_searched = False
@@ -484,6 +476,8 @@ def main():
         
         if st.session_state.last_updated:
             st.caption(f"Last updated: {st.session_state.last_updated}")
+            if hasattr(st.session_state, 'file_version') and st.session_state.file_version:
+                st.caption(f"Version: {st.session_state.file_version}")
         
         st.markdown("---")
         
@@ -559,24 +553,30 @@ def main():
             if password == "197": 
                 uploaded_file = st.file_uploader("Upload Excel/CSV", type=['xlsx', 'csv'])
                 if uploaded_file:
-                    with st.spinner('Processing...'):
-                        if uploaded_file.name.endswith('.csv'):
-                            try: df_raw = pd.read_csv(uploaded_file, header=None)
-                            except: uploaded_file.seek(0); df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
-                        else: df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
-                        
-                        clean_df, error = process_data(df_raw)
-                        if clean_df is not None:
-                            update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+                    # 顯示確認按鈕，打斷無限 Rerun 迴圈
+                    st.info(f"已選取檔案：{uploaded_file.name}")
+                    if st.button("🚀 確認更新資料庫"):
+                        with st.spinner('Processing...'):
+                            if uploaded_file.name.endswith('.csv'):
+                                try: df_raw = pd.read_csv(uploaded_file, header=None)
+                                except: uploaded_file.seek(0); df_raw = pd.read_csv(uploaded_file, header=None, encoding='big5')
+                            else: df_raw = pd.read_excel(uploaded_file, engine='openpyxl', header=None)
                             
-                            if save_data_to_r2(clean_df, update_time):
-                                load_data_from_r2.clear()  # 清除快取
-                                st.session_state.data = clean_df
-                                st.session_state.last_updated = update_time
-                                st.success(f"✅ 已上傳 {len(clean_df)} 筆資料到 Cloudflare R2")
-                                st.rerun()
-                        else: 
-                            st.error(error)
+                            clean_df, error = process_data(df_raw)
+                            if clean_df is not None:
+                                update_time = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+                                file_name = uploaded_file.name
+                                
+                                if save_data_to_r2(clean_df, update_time, file_name):
+                                    load_data_from_r2.clear()  # 清除快取
+                                    st.session_state.data = clean_df
+                                    st.session_state.last_updated = update_time
+                                    st.session_state.file_version = file_name
+                                    st.success(f"✅ 已上傳 {len(clean_df)} 筆資料到 Cloudflare R2")
+                                    time.sleep(1) # 讓使用者看一下成功訊息
+                                    st.rerun()
+                            else: 
+                                st.error(error)
 
     # --- 主畫面 ---
     st.markdown('<div class="main-header">醫療產品查詢系統</div>', unsafe_allow_html=True)
