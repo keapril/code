@@ -369,7 +369,13 @@ def process_data(df):
                                 }
                                 processed_list.append(final_item)
 
-        return pd.DataFrame(processed_list), None
+        # 去除完全重複的項目（可能因為多個產品欄位導致）
+        df_result = pd.DataFrame(processed_list)
+        if not df_result.empty:
+            # 根據關鍵欄位去重：醫院名稱 + 型號 + 院內碼
+            df_result = df_result.drop_duplicates(subset=['醫院名稱', '型號', '院內碼', '產品名稱'], keep='first')
+        
+        return df_result, None
 
     except Exception as e:
         return None, f"處理錯誤: {str(e)}"
