@@ -314,7 +314,7 @@ def process_data(df):
                             
                             # 優先選擇策略：
                             # 1. 優先選擇有日期的院內碼，並選擇日期最新的那一個
-                            # 2. 如果都沒有日期，只保留第一個（避免重複）
+                            # 2. 如果都沒有日期，保留所有不同院內碼（支援一物一碼）
                             codes_with_date = [c for c in all_code_candidates if c['日期'] > 0]
                             
                             if codes_with_date:
@@ -322,8 +322,9 @@ def process_data(df):
                                 best_code = max(codes_with_date, key=lambda x: x['日期'])
                                 found_relevant_matches = [best_code]
                             elif all_code_candidates:
-                                # 都沒有日期，只保留第一個避免重複
-                                found_relevant_matches = [all_code_candidates[0]]
+                                # 都沒有日期，保留所有不同的院內碼（支援中國體系一物一碼）
+                                # 例如：#1809411(610132) 和 #1809412(610133) 都應該保留
+                                found_relevant_matches = all_code_candidates
                             else:
                                 found_relevant_matches = []
                     else:
