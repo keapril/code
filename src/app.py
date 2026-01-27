@@ -332,24 +332,27 @@ def process_data(df):
 
                     # 為每個拆分後的產品型號建立對應的項目
                     # 優先處理：如果所有 match 都有額外型號，則只使用額外型號，不與產品型號交叉
-                    has_extra_models = all(m.get('額外型號') for m in found_relevant_matches if m.get('院內碼'))
+                    # 過濾掉空的 match
+                    valid_matches = [m for m in found_relevant_matches if m.get('院內碼')]
+                    has_extra_models = len(valid_matches) > 0 and all(m.get('額外型號') for m in valid_matches)
                     
-                    if has_extra_models and found_relevant_matches:
+                    if has_extra_models:
                         # 所有院內碼都有額外型號（如中國體系：#1809411(610132)）
                         # 直接使用額外型號，不與產品型號交叉
-                        for match in found_relevant_matches:
-                            if match.get('額外型號'):
-                                final_item = {
-                                    '醫院名稱': hospital_name,
-                                    '型號': match['額外型號'],
-                                    '產品名稱': p_info['產品名稱'],
-                                    '健保碼': p_info['健保碼'],
-                                    '院內碼': match['院內碼'],
-                                    '批價碼': match.get('批價碼', ''), 
-                                    '原始備註': cell_content,
-                                    '搜尋用字串': f"{match['額外型號']} {match['額外型號'].lower()} {p_info['產品名稱']} {p_info['健保碼']}".lower()
-                                }
-                                processed_list.append(final_item)
+                        for match in valid_matches:
+                            final_item = {
+                                '醫院名稱': hospital_name,
+                                '型號': match['額外型號'],
+                                '產品名稱': p_info['產品名稱'],
+                                '健保碼': p_info['健保碼'],
+                                '院內碼': match['院內碼'],
+                                '批價碼': match.get('批價碼', ''), 
+                                '原始備註': cell_content,
+                                '搜尋用字串': f"{match['額外型號']} {match['額外型號'].lower()} {p_info['產品名稱']} {p_info['健保碼']}".lower()
+                            }
+                            processed_list.append(final_item)
+                        # 處理完額外型號後，跳過這個產品的其他處理
+                        continue
                     else:
                         # 沒有額外型號，或只有部分有額外型號，使用產品型號
                         for p_entry in p_info['entries']:
