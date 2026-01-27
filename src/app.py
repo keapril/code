@@ -265,10 +265,22 @@ def process_data(df):
                                             if current_date > date_val:
                                                 date_val = current_date
                                     
+                                    # 提取括號內容（用於智慧配對）
+                                    bracket_model = None
+                                    bracket_contents = re.findall(r'\(([^)]+)\)', context_text)
+                                    for bracket_text in bracket_contents:
+                                        bracket_text = bracket_text.strip()
+                                        # 只提取字母數字組合，排除日期和中文
+                                        if (re.match(r'^[A-Za-z0-9\-]+$', bracket_text) and 
+                                            not re.match(r'^\d{2,4}[/\.\-]\d{1,2}', bracket_text)):
+                                            bracket_model = bracket_text
+                                            break
+                                    
                                     all_code_candidates.append({
                                         '院內碼': code,
                                         '批價碼': '',
-                                        '日期': date_val
+                                        '日期': date_val,
+                                        '括號內容': bracket_model
                                     })
                             
                             # 優先選擇策略：
@@ -289,23 +301,49 @@ def process_data(df):
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': ''}]
 
+                    # 建立產品型號集合（用於智慧括號配對）
+                    product_model_set = {entry['name'] for entry in p_info['entries']}
+                    
                     # 為每個拆分後的產品型號建立對應的項目
+                    # 智慧括號配對：只有當括號內容完全吻合產品型號時才精確配對
                     for p_entry in p_info['entries']:
                         for match in found_relevant_matches:
                             if not match.get('院內碼'):
                                 continue
                             
-                            final_item = {
-                                '醫院名稱': hospital_name,
-                                '型號': p_entry['name'],
-                                '產品名稱': p_info['產品名稱'],
-                                '健保碼': p_info['健保碼'],
-                                '院內碼': match['院內碼'],
-                                '批價碼': match.get('批價碼', ''), 
-                                '原始備註': cell_content,
-                                '搜尋用字串': p_entry['search_string']
-                            }
-                            processed_list.append(final_item)
+                            # 檢查括號內容是否為產品型號
+                            bracket_content = match.get('括號內容')
+                            
+                            if bracket_content and bracket_content in product_model_set:
+                                # 括號內容是產品型號：精確配對
+                                # 例如：#1809411(610132) 只配對型號 610132
+                                if bracket_content == p_entry['name']:
+                                    final_item = {
+                                        '醫院名稱': hospital_name,
+                                        '型號': p_entry['name'],
+                                        '產品名稱': p_info['產品名稱'],
+                                        '健保碼': p_info['健保碼'],
+                                        '院內碼': match['院內碼'],
+                                        '批價碼': match.get('批價碼', ''), 
+                                        '原始備註': cell_content,
+                                        '搜尋用字串': p_entry['search_string']
+                                    }
+                                    processed_list.append(final_item)
+                                # else: 型號不吻合，跳過
+                            else:
+                                # 括號內容不是產品型號（或沒有括號）：配對所有型號
+                                # 例如：#21869302 或 #123456(祐新) 配對所有型號
+                                final_item = {
+                                    '醫院名稱': hospital_name,
+                                    '型號': p_entry['name'],
+                                    '產品名稱': p_info['產品名稱'],
+                                    '健保碼': p_info['健保碼'],
+                                    '院內碼': match['院內碼'],
+                                    '批價碼': match.get('批價碼', ''), 
+                                    '原始備註': cell_content,
+                                    '搜尋用字串': p_entry['search_string']
+                                }
+                                processed_list.append(final_item)
 
 
         # 去除完全重複的項目（可能因為多個產品欄位導致）
