@@ -1,0 +1,7 @@
+streamlit
+pandas
+re
+openpyxl
+pyarrow
+s3fs
+fsspec
