@@ -253,13 +253,10 @@ def process_data(df):
                                     if symbol != '#':
                                         continue
                                     
-                                    # 提取所有括號內的內容（從院內碼後面的文字）
-                                    bracket_contents = re.findall(r'\(([^)]+)\)', context_text)
-                                    
                                     # 尋找日期（優先從後續的 $ 價格行尋找）
                                     date_val = 0
                                     
-                                    # 先在後續文字中尋找日期（包含 $ 價格行）
+                                    # 在後續文字中尋找日期（包含 $ 價格行）
                                     all_dates = re.findall(r'(\d{2,4})[/\.](\d{1,2})[/\.](\d{1,2})', context_text)
                                     if all_dates:
                                         # 取最新的日期
@@ -278,37 +275,10 @@ def process_data(df):
                                             if current_date > date_val:
                                                 date_val = current_date
                                     
-                                    # 提取額外型號（排除日期、中文、特定關鍵字）
-                                    extra_model = None
-                                    exclude_spec = ['議價', '生效', '發票', '稅', '折讓', '贈', '單', '訂單', '通知', '健保', '關碼', '停用', '缺貨', '取代', '急採', '收費', '月', '年', '日', '/', '銀鐸', '祐新', 'ACP', 'acp', 'CR', 'USA']
-                                    
-                                    for bracket in bracket_contents:
-                                        bracket = bracket.strip()
-                                        # 跳過包含排除關鍵字的括號
-                                        if any(k in bracket for k in exclude_spec):
-                                            continue
-                                        # 跳過日期格式
-                                        if re.search(r'\d{2,4}[/\.]\d{1,2}', bracket):
-                                            continue
-                                        # 跳過包含中文的
-                                        if re.search(r'[\u4e00-\u9fff]', bracket):
-                                            continue
-                                        # 跳過過長的內容
-                                        if len(bracket) > 50:
-                                            continue
-                                        # 跳過純數字（可能是價格）
-                                        if bracket.isdigit():
-                                            continue
-                                        
-                                        # 這應該是額外型號
-                                        extra_model = bracket.split()[0] if bracket else None
-                                        break
-                                    
-                                    # 收集候選項
+                                    # 收集候選項（不再提取額外型號，括號內容只是備註）
                                     all_code_candidates.append({
                                         '院內碼': code,
                                         '批價碼': '',
-                                        '額外型號': extra_model,
                                         '日期': date_val
                                     })
                             
@@ -328,46 +298,26 @@ def process_data(df):
                             else:
                                 found_relevant_matches = []
                     else:
-                        found_relevant_matches = [{'院內碼': '', '批價碼': '', '額外型號': None}]
+                        found_relevant_matches = [{'院內碼': '', '批價碼': ''}]
 
                     # 為每個拆分後的產品型號建立對應的項目
-                    # 優先處理：如果所有 match 都有額外型號，則只使用額外型號，不與產品型號交叉
-                    # 過濾掉空的 match
-                    valid_matches = [m for m in found_relevant_matches if m.get('院內碼')]
-                    has_extra_models = len(valid_matches) > 0 and all(m.get('額外型號') for m in valid_matches)
-                    
-                    if has_extra_models:
-                        # 所有院內碼都有額外型號（如中國體系：#1809411(610132)）
-                        # 直接使用額外型號，不與產品型號交叉
-                        for match in valid_matches:
+                    # 直接使用產品型號與院內碼配對（括號內容只是備註）
+                    for p_entry in p_info['entries']:
+                        for match in found_relevant_matches:
+                            if not match.get('院內碼'):
+                                continue
                             final_item = {
                                 '醫院名稱': hospital_name,
-                                '型號': match['額外型號'],
+                                '型號': p_entry['name'],
                                 '產品名稱': p_info['產品名稱'],
                                 '健保碼': p_info['健保碼'],
                                 '院內碼': match['院內碼'],
                                 '批價碼': match.get('批價碼', ''), 
                                 '原始備註': cell_content,
-                                '搜尋用字串': f"{match['額外型號']} {match['額外型號'].lower()} {p_info['產品名稱']} {p_info['健保碼']}".lower()
+                                '搜尋用字串': p_entry['search_string']
                             }
                             processed_list.append(final_item)
-                        # 處理完額外型號後，跳過這個產品的其他處理
-                        continue
-                    else:
-                        # 沒有額外型號，或只有部分有額外型號，使用產品型號
-                        for p_entry in p_info['entries']:
-                            for match in found_relevant_matches:
-                                final_item = {
-                                    '醫院名稱': hospital_name,
-                                    '型號': p_entry['name'],
-                                    '產品名稱': p_info['產品名稱'],
-                                    '健保碼': p_info['健保碼'],
-                                    '院內碼': match['院內碼'],
-                                    '批價碼': match.get('批價碼', ''), 
-                                    '原始備註': cell_content,
-                                    '搜尋用字串': p_entry['search_string']
-                                }
-                                processed_list.append(final_item)
+
 
         # 去除完全重複的項目（可能因為多個產品欄位導致）
         df_result = pd.DataFrame(processed_list)
