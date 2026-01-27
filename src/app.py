@@ -283,21 +283,27 @@ def process_data(df):
                                         '括號內容': bracket_model
                                     })
                             
-                            # 優先選擇策略：
-                            # 1. 優先選擇有日期的院內碼，並選擇日期最新的那一個
-                            # 2. 如果都沒有日期，保留所有不同院內碼（支援一物一碼）
-                            codes_with_date = [c for c in all_code_candidates if c['日期'] > 0]
+                            # 優先選擇策略：根據括號內容分組後再進行日期優先選擇
+                            # 不同括號內容 = 不同產品，不應互相排除
+                            groups = {}
+                            for candidate in all_code_candidates:
+                                bracket_key = candidate.get('括號內容') or ''
+                                if bracket_key not in groups:
+                                    groups[bracket_key] = []
+                                groups[bracket_key].append(candidate)
                             
-                            if codes_with_date:
-                                # 選擇日期最新的院內碼
-                                best_code = max(codes_with_date, key=lambda x: x['日期'])
-                                found_relevant_matches = [best_code]
-                            elif all_code_candidates:
-                                # 都沒有日期，保留所有不同的院內碼（支援中國體系一物一碼）
-                                # 例如：#1809411(610132) 和 #1809412(610133) 都應該保留
-                                found_relevant_matches = all_code_candidates
-                            else:
-                                found_relevant_matches = []
+                            final_matches = []
+                            for bracket, candidates in groups.items():
+                                codes_with_date = [c for c in candidates if c['日期'] > 0]
+                                if codes_with_date:
+                                    # 選擇該分組內日期最新的
+                                    best = max(codes_with_date, key=lambda x: x['日期'])
+                                    final_matches.append(best)
+                                else:
+                                    # 該分組內都沒日期，全部保留
+                                    final_matches.extend(candidates)
+                            
+                            found_relevant_matches = final_matches if final_matches else []
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': ''}]
 
