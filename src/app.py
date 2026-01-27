@@ -64,8 +64,15 @@ st.markdown("""
         --font-sans: 'Lato', sans-serif;
     }
 
-    .stApp { background-color: var(--bg-color); color: var(--text-main); font-family: var(--font-sans); }
+    .stApp { background-color: var(--bg-color); color: var(--text-main); }
+    /* 修正：針對內容區域設定字體，避免干擾內建圖示 */
+    .main .block-container, [data-testid="stSidebarContent"] { font-family: var(--font-sans); }
     [data-testid="stSidebar"] { background-color: var(--sidebar-bg); border-right: 1px solid #E5E5E5; }
+    
+    /* 確保 Material Symbols 圖示正常顯示 */
+    .stApp [data-testid="stIconMaterial"], .stApp i {
+        font-family: 'Material Symbols Outlined' !important;
+    }
     h1, h2, h3 { font-family: var(--font-serif) !important; color: #2C3639 !important; font-weight: 700; letter-spacing: 0.05em; }
 
     .main-header { font-size: 2.5rem; border-bottom: 2px solid var(--accent-color); padding-bottom: 10px; margin-bottom: 20px; text-align: center; }
@@ -230,8 +237,11 @@ def process_data(df):
                         else:
                             # 使用正則表達式同時捕獲院內碼及其後的所有括號內容
                             # 例如：#1809411(610132)(祐新) 會捕獲到 1809411 和 (610132)(祐新)
-                            pattern_with_brackets = r'#\s*([A-Za-z0-9\-\.\_]+)((?:\s*\([^)]*\))*)'
+                            pattern_with_brackets = r'#\s*([A-Za-z0-9\-\.\\_]+)((?:\s*\([^)]*\))*)'
                             matches = re.findall(pattern_with_brackets, cell_content)
+                            
+                            # 收集所有院內碼候選項（包含日期資訊）
+                            all_code_candidates = []
                             
                             if matches:
                                 for code, brackets_text in matches:
@@ -281,13 +291,26 @@ def process_data(df):
                                         extra_model = bracket.split()[0] if bracket else None
                                         break
                                     
-                                    # 建立項目
-                                    found_relevant_matches.append({
+                                    # 收集候選項
+                                    all_code_candidates.append({
                                         '院內碼': code,
                                         '批價碼': '',
                                         '額外型號': extra_model,
                                         '日期': date_val
                                     })
+                            
+                            # 優先選擇策略：
+                            # 1. 如果有帶日期的院內碼，選擇日期最新的那一個
+                            # 2. 如果都沒有日期，則全部保留
+                            codes_with_date = [c for c in all_code_candidates if c['日期'] > 0]
+                            
+                            if codes_with_date:
+                                # 選擇日期最新的院內碼
+                                best_code = max(codes_with_date, key=lambda x: x['日期'])
+                                found_relevant_matches = [best_code]
+                            else:
+                                # 都沒有日期，保留所有
+                                found_relevant_matches = all_code_candidates
                     else:
                         found_relevant_matches = [{'院內碼': '', '批價碼': '', '額外型號': None}]
 
