@@ -1,0 +1,25 @@
+name: Streamlit Heartbeat
+
+on:
+  schedule:
+    # 每 5 分鐘執行一次（UTC 時間）
+    - cron: '*/5 * * * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 訪問 Streamlit 應用程式
+        run: |
+          echo "Sending heartbeat to Streamlit app..."
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://southcode.streamlit.app/)
+          echo "Response status: $HTTP_CODE"
+          echo "Heartbeat sent at $(date)"
+          
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
+            echo "✅ Heartbeat successful"
+          else
+            echo "⚠️ Heartbeat failed with status $HTTP_CODE"
+            exit 1
+          fi
