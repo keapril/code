@@ -26,5 +26,13 @@ jobs:
       - name: 執行定時喚醒腳本
         run: python .github/scripts/keep_alive.py
 
+      - name: 上傳截圖以供除錯
+        uses: actions/upload-artifact@v4
+        if: always() # 確保無論成功或失敗都會上傳
+        with:
+          name: selenium-screenshots
+          path: '*.png'
+          retention-days: 7
+
       - name: 保持 Github Actions 活躍 (避免 60 天未提交被暫停)
         uses: gautamkrishnar/keepalive-workflow@v2
