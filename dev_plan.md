@@ -1,5 +1,46 @@
 # 開發計畫與進度記錄
 
+## 📅 2026-03-26 完成項目
+
+### ✅ 解決 Streamlit Cloud 休眠問題
+
+1. **問題分析**
+   - Streamlit Cloud 免費版在閒置後會進入休眠，需手動按「Yes, get this app back up!」才能喚醒
+   - 先前嘗試使用 GitHub Actions 每 5 分鐘 curl 心跳，但 `curl` 無法建立真實 WebSocket 連線，對 Streamlit 無效
+
+2. **嘗試 GitHub Actions + Selenium（最終放棄）**
+   - 建立 `.github/scripts/keep_alive.py`：使用 Selenium 模擬瀏覽器真實開啟網頁並點擊喚醒按鈕
+   - 建立 `.github/workflows/heartbeat.yml`：排程每天執行並附截圖存檔供除錯
+   - **根本問題**：原本排程為每 5 分鐘一次，導致一個月累積 900+ 次執行，GitHub 系統將此 Repo 的 Actions 標記為疑似濫用並永久封鎖（`Repository access blocked`）
+   - 移除曾加入的 `keepalive-workflow` 第三方套件（該套件需要 write 權限 push commit，是封鎖的直接觸發點）
+   - 最終決策：從 Repo 完全移除所有 Actions 相關檔案
+
+3. **最終解法：UptimeRobot（成功）**
+   - 使用 [uptimerobot.com](https://uptimerobot.com) 免費服務
+   - 設定每 5 分鐘 HTTP(s) Ping `https://southcode.streamlit.app/`
+   - 免費版提供 50 個監控名額，無隱藏限制，不需要信用卡
+   - ✅ 已成功設定並啟用
+
+### 🗂️ 本日 Git 提交記錄
+
+```text
+7f61f28 - 移除 GitHub Actions 心跳腳本，改由 UptimeRobot 負責防休眠
+2430cf2 - 移除 keepalive-workflow 解決 Repository access blocked
+277b530 - 給予 heartbeat.yml actions 和 contents 寫入權限（最終放棄此路線）
+3d3a49b - 把截圖檔加上 upload-artifact 方便觀察
+70c6563 - 強化 Selenium 按鈕尋找邏輯並新增截圖
+0510e35 - 更新 Streamlit 心跳喚醒腳本與排程
+```
+
+### 📌 目前防休眠架構
+
+| 任務             | 工具            | 頻率      |
+|------------------|-----------------|-----------|
+| Streamlit 防休眠 | **UptimeRobot** | 每 5 分鐘 |
+| GitHub Actions   | 已全數移除      | —         |
+
+---
+
 ## 📅 2026-01-27 完成項目
 
 ### ✅ 已完成的修正與優化

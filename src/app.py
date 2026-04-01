@@ -643,7 +643,7 @@ def main():
                         {'selector': 'th', 'props': [('background-color', '#F0EFEB'), ('color', '#2C3639'), ('font-family', "'Noto Serif TC', serif"), ('font-weight', 'bold'), ('border-bottom', '2px solid #6D8B74')]},
                         {'selector': 'td', 'props': [('padding', '12px 10px')]}
                     ])\
-                    .applymap(lambda v: 'color: #6D8B74; font-weight: bold;', subset=['醫院名稱'])
+                    .map(lambda v: 'color: #6D8B74; font-weight: bold;', subset=['醫院名稱'])
                 
                 st.dataframe(styled_df, use_container_width=True, hide_index=True, height=700)
             else:
