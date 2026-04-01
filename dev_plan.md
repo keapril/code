@@ -1,5 +1,31 @@
 # 開發計畫與進度記錄
 
+## 📅 2026-04-01 完成項目
+
+### ✅ 修復搜尋功能 (Pandas 版本相容性)
+
+1. **問題分析**
+   - 使用者反應搜尋功能故障，畫面顯示 `AttributeError`。
+   - 經檢查為新版 Pandas (2.1.0+) 將 `Styler.applymap` 棄用，並在 2.2.0 中移除。
+   - 導致 Streamlit 在嘗試渲染查詢結果 DataFrame 時崩潰。
+
+2. **解決方案**
+   - 將 `src/app.py` 中的 `Styler.applymap` 語法修正為全域通用的 `Styler.map`。
+   - 優化顏色標註邏輯，確保與 CSS 變數 `--accent-color` (#6D8B74) 保持一致。
+
+3. **自動部署**
+   - 已將修正後的程式碼推送到 GitHub `main` 分支。
+   - Streamlit Cloud 已自動偵測並完成重新部署。
+   - ✅ 經驗證搜尋功能已回復正常。
+
+### 🗂️ 本日 Git 提交記錄
+
+```text
+f3d4fad - fix(search): 將 Styler.applymap 修正為 Styler.map 以相容新版 Pandas
+```
+
+---
+
 ## 📅 2026-03-26 完成項目
 
 ### ✅ 解決 Streamlit Cloud 休眠問題
