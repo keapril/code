@@ -99,14 +99,15 @@ st.markdown("""
 # --- 4. 資料處理核心邏輯 ---
 def process_data(df):
     try:
-        # 基礎清理
+        # 基礎清理：確保所有 NaN 或空值都被轉換為空字串，再轉為 string 型別
         df = df.dropna(how='all').dropna(axis=1, how='all').reset_index(drop=True)
-        df = df.astype(str).apply(lambda x: x.str.strip())
+        df = df.fillna('').astype(str).apply(lambda x: x.str.strip())
         
         # 自動偵測標題列
         header_col_idx = -1
         for c in range(min(15, df.shape[1])):
-            if df.iloc[:, c].astype(str).apply(lambda x: '型號' in x).any():
+            # 安全偵測：使用 .str.contains 避免 lambda 比對時遇到非字串型別
+            if df.iloc[:, c].astype(str).str.contains('型號', na=False).any():
                 header_col_idx = c
                 break
         
@@ -193,14 +194,17 @@ def process_data(df):
             
             is_valid = False
             
-            if "國立陽明" in hospital_name:
+            # 比對醫院白名單
+            if "國立陽明" in str(hospital_name):
                 is_valid = True
             else:
                 for v_hosp in ALL_VALID_HOSPITALS:
-                    if v_hosp == hospital_name:
+                    v_hosp_str = str(v_hosp)
+                    h_name_str = str(hospital_name)
+                    if v_hosp_str == h_name_str:
                         is_valid = True
                         break
-                    if len(v_hosp) > 1 and v_hosp in hospital_name:
+                    if len(v_hosp_str) > 1 and v_hosp_str in h_name_str:
                         is_valid = True
                         break
             
