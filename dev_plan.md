@@ -1,5 +1,54 @@
 # 開發計畫與進度記錄
 
+## 📅 2026-04-09 完成項目 (重大里程碑：遷移至 Next.js)
+
+### ✅ 實作「院內碼查詢系統」Next.js 版
+
+1. **問題分析**
+   - Streamlit Cloud 的休眠機制導致使用者需要手動點擊「Wake up」，影響查詢效率。
+   - UptimeRobot 等防休眠手段因平台限制逐漸失效。
+
+2. **架構決定**
+   - **前端**：使用 Next.js + TypeScript 並部署至 Cloudflare Pages，達成「零休眠」。
+   - **資料**：維持使用 R2，但由原本的 Parquet 加存一份 JSON 檔以優化 JS 讀取效能。
+
+3. **實作內容**
+   - **正名**：全系統正式更名為「院內碼查詢系統」。
+   - **UI 升級**：日系極簡美學，森林綠配色，Noto Serif TC 字體，行動裝置優先設計。
+   - **API 介面**：實作 Edge Runtime API Route 抓取 R2 資料。
+   - **搜尋邏輯**：完整移植並優化 Python 版的智慧關鍵字過濾演算法。
+
+4. **後續步驟**
+   - 使用者需在舊版系統上傳資料以生成 JSON 檔案。
+   - 在 Cloudflare Pages 設定 R2 環境變數。
+
+---
+
+## 📅 2026-04-07 完成項目
+
+### ✅ 修正檔案上傳型別錯誤 (float is not iterable)
+
+1. **問題分析**
+   - 使用者在 `Settings` 頁面更新資料庫時發生 `處理錯誤: argument of type 'float' is not iterable`。
+   - 原因是 Excel 中含有空值 (NaN) 或非字串型別，導致程式在進行 `in` 比對時崩潰。
+
+2. **解決方案**
+   - **強化轉型**：在 `src/app.py` 將 `astype(str)` 改為 `fillna('').astype(str)`，徹底確保所有內容均為字串，排除 NaN 干擾。
+   - **安全比對**：將 `apply(lambda x: '型號' in x)` 替換為 `str.contains('型號', na=False)`，提升標題列偵測的穩定性。
+   - **防禦性程式碼**：在醫院白名單比對處增加 `str()` 強制轉換，防止異常資料儲存格導致迴圈中斷。
+
+3. **自動部署**
+   - 已將修正後的程式碼推送到 GitHub `main` 分支。
+   - Streamlit Cloud 已自動完成部署，使用者可重新執行檔案上傳驗證。
+
+### 🗂️ 2026-04-07 Git 提交記錄
+
+```text
+4528f52 - fix(upload): 修正檔案上傳時 float is not iterable 的錯誤
+```
+
+---
+
 ## 📅 2026-04-01 完成項目
 
 ### ✅ 修復搜尋功能 (Pandas 版本相容性)
@@ -18,7 +67,7 @@
    - Streamlit Cloud 已自動偵測並完成重新部署。
    - ✅ 經驗證搜尋功能已回復正常。
 
-### 🗂️ 本日 Git 提交記錄
+### 🗂️ 2026-04-01 Git 提交記錄
 
 ```text
 f3d4fad - fix(search): 將 Styler.applymap 修正為 Styler.map 以相容新版 Pandas
@@ -47,7 +96,7 @@ f3d4fad - fix(search): 將 Styler.applymap 修正為 Styler.map 以相容新版 
    - 免費版提供 50 個監控名額，無隱藏限制，不需要信用卡
    - ✅ 已成功設定並啟用
 
-### 🗂️ 本日 Git 提交記錄
+### 🗂️ 2026-03-26 Git 提交記錄
 
 ```text
 7f61f28 - 移除 GitHub Actions 心跳腳本，改由 UptimeRobot 負責防休眠
@@ -165,7 +214,7 @@ f3d4fad - fix(search): 將 Styler.applymap 修正為 Styler.map 以相容新版 
 - `requirements.txt` - 新增套件依賴
 - `.gitignore` - 排除敏感檔案
 
-### 今日 Git 提交記錄
+### 🗂️ 2026-01-27 Git 提交記錄
 
 ```
 d4cbd4d - 修復高醫重複問題：實作全域日期優先去重邏輯
@@ -234,4 +283,4 @@ f13b9cd - 建立 requirements.txt 並補齊 s3fs, pyarrow 等依賴
 
 ---
 
-**最後更新時間**：2026-01-27 16:49
+**最後更新時間**：2026-04-07 13:36

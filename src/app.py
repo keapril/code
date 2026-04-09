@@ -10,7 +10,7 @@ import s3fs
 
 # --- 1. 設定頁面配置 ---
 st.set_page_config(
-    page_title="醫療產品查詢系統", 
+    page_title="院內碼查詢系統", 
     layout="wide", 
     page_icon="🌿"
 )
@@ -47,6 +47,7 @@ ALL_VALID_HOSPITALS = PUBLIC_HOSPITALS + MANAGER_HOSPITALS
 
 # R2 設定檔案路徑
 R2_PARQUET_PATH = "medical_products.parquet"
+R2_JSON_PATH = "medical_products.json"
 R2_METADATA_PATH = "metadata.json"
 
 # --- 3. CSS 樣式優化 ---
@@ -404,7 +405,12 @@ def save_data_to_r2(df, updated_at, file_name):
         with fs.open(parquet_key, 'wb') as f:
             df.to_parquet(f, index=False, engine='pyarrow')
             
-        # 2. 儲存中繼資料 (JSON)
+        # 2. 儲存 JSON 資料檔 (供 Next.js 使用)
+        json_key = f"{bucket}/{R2_JSON_PATH}"
+        with fs.open(json_key, 'w', encoding='utf-8') as f:
+            df.to_json(f, orient='records', force_ascii=False)
+
+        # 3. 儲存中繼資料 (JSON)
         meta_key = f"{bucket}/{R2_METADATA_PATH}"
         metadata = {
             'updated_at': updated_at,
@@ -603,7 +609,7 @@ def main():
                                 st.error(error)
 
     # --- 主畫面 ---
-    st.markdown('<div class="main-header">醫療產品查詢系統</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">院內碼查詢系統</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Medical Product Database</div>', unsafe_allow_html=True)
 
     if st.session_state.data is not None and not st.session_state.data.empty:
