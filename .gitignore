@@ -16,6 +16,13 @@ dist/
 config/.firebase/
 *.json
 !*.example.json
+# 排除 web/ 資料夾的 JSON 例外（Next.js 專案需要）
+!web/*.json
+!web/**/*.json
+
+# Next.js 建置產物（不推送）
+web/node_modules/
+web/.next/
 
 # IDE
 .vscode/
