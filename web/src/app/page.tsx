@@ -200,6 +200,7 @@ export default function SearchPage() {
               <div className="grid grid-cols-1 gap-2">
                 <select 
                    className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand focus:border-brand outline-none transition-all appearance-none"
+                   value={selectedHospitals.length > 0 ? selectedHospitals[0] : "ALL"}
                    onChange={(e) => {
                      const val = e.target.value;
                      if (val === "ALL") setSelectedHospitals([]);
