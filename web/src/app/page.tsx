@@ -2,12 +2,10 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
 
 // --- 類型定義 ---
 interface MedicalProduct {
-  医院名稱: string;
+  醫院名稱: string;
   型號: string;
   產品名稱: string;
   健保碼: string;
@@ -74,7 +72,7 @@ export default function SearchPage() {
 
   // 取得當前可見的醫院清單
   const availableHospitals = useMemo(() => {
-    const dbHospitals = Array.from(new Set(data.map(item => item.医院名稱)));
+    const dbHospitals = Array.from(new Set(data.map(item => item.醫院名稱)));
     const allowed = isAdmin ? [...PUBLIC_HOSPITALS, ...MANAGER_HOSPITALS] : PUBLIC_HOSPITALS;
     return dbHospitals
       .filter(h => allowed.some(a => h === a || h.includes(a)))
@@ -89,10 +87,10 @@ export default function SearchPage() {
 
     // 1. 醫院權限與選擇過濾
     const allowed = isAdmin ? [...PUBLIC_HOSPITALS, ...MANAGER_HOSPITALS] : PUBLIC_HOSPITALS;
-    result = result.filter(item => allowed.some(a => item.医院名稱 === a || item.医院名稱.includes(a)));
+    result = result.filter(item => allowed.some(a => item.醫院名稱 === a || item.醫院名稱.includes(a)));
 
     if (selectedHospitals.length > 0) {
-      result = result.filter(item => selectedHospitals.includes(item.医院名稱));
+      result = result.filter(item => selectedHospitals.includes(item.醫院名稱));
     }
 
     // 2. 代碼搜尋
@@ -116,7 +114,7 @@ export default function SearchPage() {
           const matchNormal = 
             (item.搜尋用字串?.toLowerCase().includes(q)) ||
             (item.原始備註?.toLowerCase().includes(q)) ||
-            (item.医院名稱?.toLowerCase().includes(q));
+            (item.醫院名稱?.toLowerCase().includes(q));
           
           if (q_clean && !matchNormal) {
              return item.搜尋用字串?.toLowerCase().includes(q_clean);
@@ -281,7 +279,7 @@ export default function SearchPage() {
                   <div className="flex flex-col gap-4">
                     <div className="flex justify-between items-start">
                       <div className="space-y-1 flex-1 pr-4">
-                        <span className="text-[10px] font-bold text-brand uppercase tracking-widest block">{item.医院名稱}</span>
+                        <span className="text-[10px] font-bold text-brand uppercase tracking-widest block">{item.醫院名稱}</span>
                         <h3 className="text-lg font-bold text-gray-800 font-serif leading-tight">{item.產品名稱}</h3>
                       </div>
                       {item.院內碼 && (
