@@ -1,5 +1,8 @@
 "use client";
 
+// 宣告此頁面使用 Edge Runtime（Cloudflare Pages 部署必要）
+export const runtime = 'edge';
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
