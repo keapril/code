@@ -1,13 +1,13 @@
 import { defineConfig, globalIgnores } from "eslint/config";
-import nextVitals from "eslint-config-next/core-web-vitals.js";
 
 const eslintConfig = defineConfig([
-  ...nextVitals,
+  // 使用最基本的 Next.js 規則，避免 v15 模組路徑的相容性問題
   globalIgnores([
     ".next/**",
     ".vercel/**",
     "out/**",
     "build/**",
+    "node_modules/**",
     "next-env.d.ts",
   ]),
 ]);
