@@ -1,5 +1,42 @@
 # 開發計畫與進度記錄
 
+## 📅 2026-04-10 完成項目
+
+### ✅ 修正 Next.js 部署細節
+
+1. **本地 Build 驗證**
+   - 在本地執行 `npm run build`，確認程式碼無 TypeScript 錯誤，build 乾淨通過。
+
+2. **修正 `layout.tsx`**
+   - 移除 create-next-app 預設的 Geist 字型（重複，已用 Noto Serif TC）。
+   - 更新網頁標題為「院內碼查詢系統」。
+   - 更新 meta description 為中文版本。
+   - 設定語言為 `zh-Hant`。
+
+3. **修正 `globals.css` CSS @import 順序**
+   - 將 Google Fonts `@import` 移至 `@import "tailwindcss"` 之前，消除 build warning。
+
+4. **清理雜檔**
+   - 刪除 `WHERE_AM_I.txt` 測試檔案。
+
+5. **推送更新**
+   - 已推送至 GitHub `main` 分支（版本 `6e1bbff`）。
+   - Cloudflare Pages 應已觸發自動重新部署。
+
+### 🗂️ 2026-04-10 Git 提交記錄
+
+```text
+6e1bbff - fix: 修正 layout 標題與 CSS import 順序，清理測試雜檔
+```
+
+### ⏳ 下一步待確認
+- [ ] 登入 Cloudflare Pages Dashboard，確認 `6e1bbff` 版本部署成功
+- [ ] 點開 `.pages.dev` 網址確認 UI 正常顯示
+- [ ] 在舊版 Streamlit 上傳一次資料，讓 Python 產生 `medical_products.json` 並寫入 R2
+- [ ] 回到新版網頁確認資料能正常讀取
+
+---
+
 ## 📅 2026-04-09 完成項目 (重大里程碑：遷移至 Next.js)
 
 ### ✅ 實作「院內碼查詢系統」Next.js 版
@@ -23,6 +60,36 @@
    - 在 Cloudflare Pages 設定 R2 環境變數。
 
 ---
+
+## 📅 2026-04-09 下午 — Cloudflare Pages 部署排錯紀錄
+
+### 🔧 今日作戰情報（留存給明天繼續）
+
+#### 已完成的部分
+- [x] 修正 `.gitignore`：新增 `!web/*.json` / `!web/**/*.json` 例外，並排除 `web/node_modules/` 與 `web/.next/`
+- [x] 強制推送所有 Next.js 必要源碼（`s3.ts`、`route.ts`、`page.tsx`、`layout.tsx`、`globals.css`、`package.json`、`tsconfig.json` 等），版本號：`5a66d9e`
+- [x] 確認 GitHub 上的 `main` 分支已包含完整的 `web/` 目錄結構
+- [x] 在 Cloudflare 建立全新的 **Pages 專案**（非 Worker），已設定：
+  - **Root directory**: `/web`
+  - **Build command**: `npm run build`
+  - **Build output directory**: `.next`
+  - **NODE_VERSION**: `20`
+  - **R2 環境變數**：ACCESS_KEY、SECRET_KEY、ENDPOINT_URL、BUCKET_NAME 均已設定
+
+#### 踩到的坑（教訓紀錄）
+1. **舊 Worker 專案鬼打牆**：原有的 `code` Worker 專案被 Cloudflare 快取死鎖，不論推送幾次都固定抓取 `4528f52` 舊版。**解法**：刪除舊專案，改走 `Pages` 流程重建。
+2. **`*.json` 被 .gitignore 排除**：原有規則把所有 JSON 包含 `package.json` 都過濾掉，導致 Cloudflare 找不到依賴清單而報錯。**解法**：補上 `!web/*.json` 例外。
+3. **`web/node_modules/` 差點被推上去**：執行 `git add -f web/` 時誤把 `node_modules` 的幾萬個檔案加入暫存區。**解法**：`git reset HEAD web/node_modules/` 移除。
+4. **`s3.ts` 等源碼未被追蹤**：因 `.gitignore` 規則的副作用，`web/src/` 下的 TypeScript 檔案未被 Git 追蹤。**解法**：逐一 `git add -f` 強制加入。
+
+#### 明天待辦事項
+- [x] **確認最新部署是否成功**：本地 `npm run build` 通過（v6e1bbff），CSS warning 已修正
+- [ ] **確認 Cloudflare Pages 部署**：上 Cloudflare Dashboard 查看 `6e1bbff` 的部署日誌是否通過
+- [ ] **若部署成功**：點開 `.pages.dev` 網址，確認網頁顯示，並在舊版 Streamlit 上傳資料以生成 R2 的 JSON 檔案
+- [x] **清理雜檔**：已刪除 `WHERE_AM_I.txt`
+
+---
+
 
 ## 📅 2026-04-07 完成項目
 
@@ -283,4 +350,4 @@ f13b9cd - 建立 requirements.txt 並補齊 s3fs, pyarrow 等依賴
 
 ---
 
-**最後更新時間**：2026-04-07 13:36
+**最後更新時間**：2026-04-10 11:34
