@@ -1,39 +1,105 @@
 # 開發計畫與進度記錄
 
-## 📅 2026-04-10 完成項目
+## 📅 2026-04-10 完成項目（🎉 Cloudflare Pages 成功上線！）
 
-### ✅ 修正 Next.js 部署細節
+### ✅ Next.js 部署至 Cloudflare Pages — 完成
 
-1. **本地 Build 驗證**
-   - 在本地執行 `npm run build`，確認程式碼無 TypeScript 錯誤，build 乾淨通過。
+**網址**：https://code-7ih.pages.dev/
 
-2. **修正 `layout.tsx`**
-   - 移除 create-next-app 預設的 Geist 字型（重複，已用 Noto Serif TC）。
-   - 更新網頁標題為「院內碼查詢系統」。
-   - 更新 meta description 為中文版本。
-   - 設定語言為 `zh-Hant`。
+#### 上午：Build 設定修正
+1. **本地 Build 驗證**：`npm run build` 通過，CSS warning 已修正。
+2. **修正 `layout.tsx`**：移除 Geist 字型、更新標題為「院內碼查詢系統」、設定 `zh-Hant`。
+3. **修正 `globals.css`**：CSS `@import` 順序調整。
+4. **清理雜檔**：刪除 `WHERE_AM_I.txt`。
 
-3. **修正 `globals.css` CSS @import 順序**
-   - 將 Google Fonts `@import` 移至 `@import "tailwindcss"` 之前，消除 build warning。
+#### 下午：Cloudflare 部署排錯與修正
 
-4. **清理雜檔**
-   - 刪除 `WHERE_AM_I.txt` 測試檔案。
-
-5. **推送更新**
-   - 已推送至 GitHub `main` 分支（版本 `6e1bbff`）。
-   - Cloudflare Pages 應已觸發自動重新部署。
+1. **`npm ci` 依賴衝突** → 新增 `web/.npmrc`（`legacy-peer-deps=true`），解決 CI 環境安裝失敗。
+2. **Node.js Compatibility Error** → 在 Cloudflare Pages Settings → Functions → Compatibility flags，Production 和 Preview 都加上 `nodejs_compat`。
+3. **Client-side crash（醫院名稱簡繁體混用）** → `page.tsx` 的 interface 用了簡體「医」，但 R2 JSON 用繁體「醫」。修正為統一繁體「醫院名稱」。
+4. **移除不必要的 runtime 宣告** → client component 不能用 `export const runtime = 'edge'`，`next-on-pages` 會自動處理。
+5. **移除未使用的 import** → `clsx`、`tailwind-merge` 清除。
+6. **醫院下拉選單未過濾** → `<select>` 改為受控元件（加 `value` prop），確保選擇狀態同步。
 
 ### 🗂️ 2026-04-10 Git 提交記錄
 
 ```text
+c4c53a8 - fix: 醫院下拉選單改為受控元件，修正過濾功能
+0e29af8 - fix: 修正醫院名稱簡繁體混用導致的 client-side crash
+7ee71c0 - fix: 移除 client component 的 edge runtime 宣告，修正 hydration 錯誤
+68d543f - fix: 加入 .npmrc 設定 legacy-peer-deps 解決 Cloudflare CI 安裝失敗
 6e1bbff - fix: 修正 layout 標題與 CSS import 順序，清理測試雜檔
 ```
 
-### ⏳ 下一步待確認
-- [ ] 登入 Cloudflare Pages Dashboard，確認 `6e1bbff` 版本部署成功
-- [ ] 點開 `.pages.dev` 網址確認 UI 正常顯示
-- [ ] 在舊版 Streamlit 上傳一次資料，讓 Python 產生 `medical_products.json` 並寫入 R2
-- [ ] 回到新版網頁確認資料能正常讀取
+### 📋 Cloudflare Pages 設定備忘
+
+| 欄位 | 設定值 |
+|------|--------|
+| **Build command** | `npx @cloudflare/next-on-pages` |
+| **Build output directory** | `.vercel/output/static` |
+| **Root directory** | `web` |
+| **Compatibility flags** | `nodejs_compat`（Production & Preview 都要設） |
+| **環境變數** | ACCESS_KEY、SECRET_KEY、ENDPOINT_URL、BUCKET_NAME |
+
+### 📦 資料更新流程
+
+1. 到 **southcode.streamlit.app** 上傳新的 Excel 檔案
+2. Streamlit 自動將 JSON 寫入 R2
+3. 新版網頁 `code-7ih.pages.dev` 即時讀取最新資料（無需重新部署）
+
+---
+
+## 🖥️ Mac 開發環境指南（回家繼續用）
+
+### 環境準備
+
+```bash
+# 1. Clone 專案（只需做一次）
+git clone https://github.com/keapril/code.git
+cd code/web
+
+# 2. 安裝依賴
+npm install
+
+# 3. 本地開發
+npm run dev
+# → 開啟 http://localhost:3000
+```
+
+### 注意事項
+
+| 項目 | 說明 |
+|------|------|
+| **Node 版本** | 18 以上（`node -v` 確認） |
+| **不用裝 wrangler** | 部署交給 Cloudflare CI，push 到 main 就自動部署 |
+| **環境變數** | 本地開發需要在 `web/.env.local` 設定 R2 金鑰（可選） |
+| **Git 換行** | Mac 用 LF / Windows 用 CRLF，Git 自動處理不用管 |
+
+### 改完程式後的部署流程
+
+```bash
+git add .
+git commit -m "你的修改說明"
+git push origin main
+# → 等 2-3 分鐘 Cloudflare 自動部署完成
+# → 到 code-7ih.pages.dev 確認
+```
+
+### `.env.local` 範例（本地開發用，不推上 Git）
+
+```env
+ACCESS_KEY=你的R2_ACCESS_KEY
+SECRET_KEY=你的R2_SECRET_KEY
+ENDPOINT_URL=https://xxxxx.r2.cloudflarestorage.com
+BUCKET_NAME=south
+```
+
+### ⏳ 後續待辦
+
+- [ ] 確認醫院+關鍵字組合搜尋是否正常
+- [ ] 測試手機版 UI 排版是否正常
+- [ ] 考慮加入「複製院內碼」一鍵複製功能
+- [ ] 評估是否需要離線快取（Service Worker）
 
 ---
 
