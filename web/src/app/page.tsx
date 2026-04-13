@@ -41,6 +41,16 @@ const MANAGER_HOSPITALS = [
     "衛生福利部臺北醫院", "部立臺北"
 ];
 
+// 模糊匹配工具：移除空白後的包含比對
+const matchesHospital = (target: string, allowedList: string[]) => {
+    if (!target) return false;
+    const cleanTarget = target.replace(/\s+/g, '');
+    return allowedList.some(a => {
+        const cleanA = a.replace(/\s+/g, '');
+        return cleanTarget.includes(cleanA) || cleanA.includes(cleanTarget);
+    });
+};
+
 export default function SearchPage() {
   const [data, setData] = useState<MedicalProduct[]>([]);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
@@ -88,40 +98,41 @@ export default function SearchPage() {
       });
   };
 
-  // 權限過濾邏輯：XOR
+  // 權限過濾邏輯：正確切換清單
   const allowedHospitals = useMemo(() => {
-      // 如果登入 163 (主管)，只看主管醫院
-      // 如果登入 197 (管理員)，看所有 (主管 + 公開)
+      // 197 管理員：查看全部
       if (isAdmin) return [...PUBLIC_HOSPITALS, ...MANAGER_HOSPITALS];
+      // 163 主管：只看特定醫院
       if (isManager) return MANAGER_HOSPITALS;
+      // 預設：只看公開南區醫院
       return PUBLIC_HOSPITALS;
   }, [isManager, isAdmin]);
 
-  // 取得當前可見的醫院清單
+  // 取得當前可見的醫院清單 (受權限控制)
   const availableHospitals = useMemo(() => {
     const dbHospitals = Array.from(new Set(data.map(item => item.醫院名稱)));
     return dbHospitals
-      .filter(h => allowedHospitals.some(a => h === a || h.includes(a)))
+      .filter(h => matchesHospital(h, allowedHospitals))
       .sort((a, b) => a.localeCompare(b, "zh-Hant"));
   }, [data, allowedHospitals]);
 
-  // 執行過濾邏輯
+  // 執行過濾邏輯 (對應搜尋條件)
   const filteredData = useMemo(() => {
     if (!data.length) return [];
     
     let result = data;
 
-    // 1. 醫院權限
-    result = result.filter(item => allowedHospitals.some(a => item.醫院名稱 === a || item.醫院名稱.includes(a)));
+    // 1. 權限過濾
+    result = result.filter(item => matchesHospital(item.醫院名稱, allowedHospitals));
 
-    // 2. 選擇過濾
+    // 2. 選擇條件過濾
     if (selectedHospitals.length > 0) {
       result = result.filter(item => selectedHospitals.includes(item.醫院名稱));
     }
 
     // 3. 代碼搜尋
     if (codeQuery) {
-      const q = codeQuery.toLowerCase();
+      const q = codeQuery.toLowerCase().trim();
       result = result.filter(item => 
         (item.院內碼?.toLowerCase().includes(q)) || 
         (item.批價碼?.toLowerCase().includes(q)) ||
@@ -133,7 +144,7 @@ export default function SearchPage() {
     if (keyQuery) {
       const keys = keyQuery.split(/\s+/).filter(k => k);
       for (const k of keys) {
-        const q = k.toLowerCase();
+        const q = k.toLowerCase().trim();
         const q_clean = q.replace(/[^a-zA-Z0-9]/g, '');
         
         result = result.filter(item => {
@@ -168,18 +179,21 @@ export default function SearchPage() {
 
   // 登入驗證
   const handleLogin = () => {
-      if (adminKey === "163") {
+      const key = adminKey.trim();
+      if (key === "163") {
           setIsManager(true);
           setIsAdmin(false);
           setAdminChecked(false);
           setAdminKey("");
-      } else if (adminKey === "197") {
+          alert("主管模式登入成功 (v1.3)");
+      } else if (key === "197") {
           setIsAdmin(true);
           setIsManager(false);
           setAdminChecked(false);
           setAdminKey("");
+          alert("管理員模式登入成功 (v1.3)");
       } else {
-          alert("密碼無效");
+          alert("密碼無效，請重新輸入");
       }
   };
 
@@ -206,7 +220,7 @@ export default function SearchPage() {
           const result = await res.json();
           if (res.ok) { setUploadStatus({ type: 'success', msg: `匯入成功！共 ${result.count} 筆資料。` }); fetchData(); if (fileInputRef.current) fileInputRef.current.value = ""; } 
           else setUploadStatus({ type: 'error', msg: result.error || "上傳失敗" });
-      } catch (err) { setUploadStatus({ type: 'error', msg: "網路或系統錯誤" }); } 
+      } catch (err) { setUploadStatus({ type: 'error', msg: "內部伺服器錯誤" }); } 
       finally { setUploading(false); }
   };
 
@@ -225,7 +239,7 @@ export default function SearchPage() {
         <div className="p-6 md:p-8 space-y-6">
           <div className="space-y-1">
             <h2 className="text-xl font-bold flex items-center gap-2 text-gray-700">
-               <span className="bg-yellow-400 p-1 rounded text-white"><LayoutGrid size={18} /></span> 查詢目錄
+               <span className="bg-yellow-400 p-1 rounded text-white"><Folder size={18} /></span> 查詢目錄
             </h2>
             {metadata && (
                 <div className="text-[10px] text-gray-400 font-medium">
@@ -256,7 +270,7 @@ export default function SearchPage() {
                  <div className="flex gap-2 animate-in fade-in duration-300">
                     <input 
                       type="password" 
-                      placeholder="Key" 
+                      placeholder="Key (163/197)" 
                       value={adminKey}
                       onChange={(e) => setAdminKey(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
@@ -266,9 +280,11 @@ export default function SearchPage() {
                  </div>
              )}
              {(isManager || isAdmin) && (
-                 <div className="bg-brand/10 px-3 py-2 rounded flex items-center justify-between animate-in zoom-in-95 duration-300">
-                     <span className="text-xs text-brand font-medium">{isAdmin ? "Admin (197)" : "Manager (163)"}</span>
-                     <button onClick={() => { setIsAdmin(false); setIsManager(false); }} className="text-brand hover:opacity-70 text-xs font-bold">退出</button>
+                 <div className="bg-green-600/10 border border-green-600/20 px-3 py-2 rounded flex items-center justify-between animate-in zoom-in-95 duration-300 shadow-sm">
+                     <span className="text-xs text-green-700 font-bold flex items-center gap-1.5">
+                        <ShieldCheck size={14} /> {isAdmin ? "Admin (197) Enabled" : "Manager (163) Enabled"}
+                     </span>
+                     <button onClick={() => { setIsAdmin(false); setIsManager(false); }} className="text-green-700 hover:opacity-70 text-xs font-black">退出</button>
                  </div>
              )}
           </div>
@@ -294,7 +310,7 @@ export default function SearchPage() {
                     <label className="text-xs font-bold text-gray-600">01. 選擇醫院</label>
                     {selectionMode === 'single' ? (
                         <select 
-                            className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none transition-all"
+                            className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none transition-all shadow-sm"
                             value={selectedHospitals[0] || "ALL"}
                             onChange={(e) => { 
                                 setSelectedHospitals(e.target.value === "ALL" ? [] : [e.target.value]); 
@@ -305,9 +321,9 @@ export default function SearchPage() {
                             {availableHospitals.map(h => <option key={h} value={h}>{h}</option>)}
                         </select>
                     ) : (
-                        <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
-                           {availableHospitals.map(h => (
-                               <label key={h} className="flex items-center gap-2 cursor-pointer">
+                        <div className="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar bg-white p-2 rounded border border-earth-border shadow-inner">
+                           {availableHospitals.length > 0 ? availableHospitals.map(h => (
+                               <label key={h} className="flex items-center gap-2 cursor-pointer py-0.5">
                                   <input 
                                     type="checkbox" 
                                     checked={selectedHospitals.includes(h)} 
@@ -320,7 +336,7 @@ export default function SearchPage() {
                                   />
                                   <span className="text-xs truncate">{h}</span>
                                </label>
-                           ))}
+                           )) : <p className="text-[10px] text-gray-400 italic">無可用醫院</p>}
                         </div>
                     )}
                 </div>
@@ -328,9 +344,9 @@ export default function SearchPage() {
                 <div className="space-y-3">
                     <label className="text-xs font-bold text-gray-600">02. 輸入代碼</label>
                     <input 
-                        type="text" placeholder="院內碼" value={codeQuery}
+                        type="text" placeholder="院內碼 / 批價碼" value={codeQuery}
                         onChange={(e) => { setCodeQuery(e.target.value); if(e.target.value) handleSearchTrigger(); }}
-                        className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none"
+                        className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none shadow-sm"
                     />
                 </div>
 
@@ -339,13 +355,13 @@ export default function SearchPage() {
                     <input 
                         type="text" placeholder="型號 / 產品名" value={keyQuery}
                         onChange={(e) => { setKeyQuery(e.target.value); if(e.target.value) handleSearchTrigger(); }}
-                        className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none"
+                        className="w-full bg-white border border-earth-border rounded px-3 py-2 text-sm focus:ring-1 focus:ring-brand outline-none shadow-sm"
                     />
                 </div>
 
                 <div className="flex gap-2 pt-2">
-                    <button onClick={handleSearchTrigger} className="flex-1 py-1.5 border border-gray-400 rounded text-xs text-gray-600 hover:bg-gray-100 uppercase tracking-widest font-serif">Search</button>
-                    <button onClick={handleReset} className="flex-1 py-1.5 border border-gray-400 rounded text-xs text-gray-600 hover:bg-gray-100 uppercase tracking-widest font-serif">Reset</button>
+                    <button onClick={handleSearchTrigger} className="flex-1 py-1.5 bg-brand text-white rounded text-xs font-bold shadow-sm hover:opacity-90 uppercase tracking-widest transition-all">Search</button>
+                    <button onClick={handleReset} className="flex-1 py-1.5 border border-gray-300 rounded text-xs text-gray-600 hover:bg-gray-100 uppercase tracking-widest transition-all">Reset</button>
                 </div>
              </div>
 
@@ -354,11 +370,11 @@ export default function SearchPage() {
                   <div className="pt-4 space-y-3 animate-in fade-in slide-in-from-top-2">
                       <label className="text-xs font-bold text-brand flex items-center gap-2"><Upload size={14} /> 資料維護 (197)</label>
                       <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" id="admin-upload" disabled={uploading}/>
-                      <label htmlFor="admin-upload" className={`w-full py-2 border-2 border-dashed border-brand/30 rounded flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-brand/5 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                      <label htmlFor="admin-upload" className={`w-full py-2 border-2 border-dashed border-brand/30 rounded flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-brand/5 shadow-sm ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
                          {uploading ? <Loader2 className="animate-spin text-brand" size={18} /> : <Upload className="text-brand" size={18} />}
                          <span className="text-[10px] text-brand/70 font-medium">點擊上傳 Excel/CSV</span>
                       </label>
-                      {uploadStatus && <div className={`text-[10px] p-2 rounded flex justify-between items-center ${uploadStatus.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}><span>{uploadStatus.msg}</span><button onClick={() => setUploadStatus(null)}><X size={12} /></button></div>}
+                      {uploadStatus && <div className={`text-[10px] p-2 rounded flex justify-between items-center shadow-sm ${uploadStatus.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}><span>{uploadStatus.msg}</span><button onClick={() => setUploadStatus(null)}><X size={12} /></button></div>}
                   </div>
              )}
           </div>
@@ -369,11 +385,13 @@ export default function SearchPage() {
       <main className="flex-1 overflow-y-auto w-full p-6 md:p-12 lg:p-16">
         <div className="max-w-6xl mx-auto space-y-12">
             
-            {/* 中央標題區 */}
-            <header className="text-center space-y-3">
-                <h1 className="text-4xl md:text-5xl font-serif font-bold text-gray-800 tracking-tight">院內碼查詢系統</h1>
-                <hr className="w-full border-t border-brand/40 max-w-sm mx-auto" />
-                <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-medium pb-4">Medical Product Database</p>
+            {/* 中央標題區 (v1.3) */}
+            <header className="text-center space-y-3 animate-in fade-in duration-700">
+                <h1 className="text-4xl md:text-5xl font-serif font-bold text-gray-800 tracking-tight">
+                    院內碼查詢系統 <span className="text-xs text-brand font-sans align-top opacity-50">v1.3</span>
+                </h1>
+                <hr className="w-full border-t-2 border-brand/40 max-w-sm mx-auto shadow-sm" />
+                <p className="text-xs uppercase tracking-[0.2em] text-gray-400 font-bold pb-4">Medical Product Database</p>
             </header>
 
             {hasSearched ? (
@@ -388,8 +406,8 @@ export default function SearchPage() {
                       </div>
                       {/* 下載 */}
                       <div className="flex gap-2">
-                          <button onClick={() => handleExport('csv')} className="px-3 py-1.5 bg-white border border-earth-border rounded text-xs text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5"><Download size={14} /> CSV</button>
-                          <button onClick={() => handleExport('xlsx')} className="px-3 py-1.5 bg-white border border-earth-border rounded text-xs text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5"><Download size={14} /> EXCEL</button>
+                          <button onClick={() => handleExport('csv')} className="px-3 py-1.5 bg-white border border-earth-border rounded text-xs text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5 font-bold"><Download size={14} /> CSV</button>
+                          <button onClick={() => handleExport('xlsx')} className="px-3 py-1.5 bg-white border border-earth-border rounded text-xs text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5 font-bold"><Download size={14} /> EXCEL</button>
                       </div>
                    </div>
                 </div>
@@ -398,42 +416,42 @@ export default function SearchPage() {
                     displayMode === 'card' ? (
                       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                         {filteredData.map((item, idx) => (
-                          <div key={idx} className="bg-white border border-earth-border hover:border-brand/40 transition-all p-7 shadow-sm hover:shadow-md group relative rounded-sm">
+                          <div key={idx} className="bg-white border border-earth-border hover:border-brand/40 transition-all p-7 shadow-sm hover:shadow-lg group relative rounded-lg border-b-4 border-b-brand/10">
                             <div className="flex flex-col gap-5">
                               <div className="flex justify-between items-start">
                                 <div className="space-y-2 flex-1 pr-4">
-                                  <span className="text-[10px] font-bold text-brand uppercase tracking-widest">{item.醫院名稱}</span>
+                                  <span className="text-[10px] font-black text-brand uppercase tracking-widest">{item.醫院名稱}</span>
                                   <h3 className="text-xl font-bold text-gray-800 font-serif leading-snug">{item.產品名稱}</h3>
                                 </div>
-                                <div className="bg-earth-bg px-4 py-2 border border-earth-border rounded-sm text-center">
+                                <div className="bg-earth-bg px-4 py-2 border border-earth-border rounded shadow-sm text-center">
                                    <span className="text-[10px] text-gray-400 block mb-1">院內碼</span>
-                                   <span className="text-sm font-mono font-bold text-gray-700">{item.院內碼}</span>
+                                   <span className="text-sm font-mono font-black text-gray-700">{item.院內碼}</span>
                                 </div>
                               </div>
                               <div className="grid grid-cols-2 gap-6 pt-5 border-t border-earth-border/50">
-                                <div><span className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">規格型號</span><span className="text-xs text-gray-600 break-all">{item.型號}</span></div>
-                                {item.健保碼 && <div><span className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">健保碼</span><span className="text-xs text-gray-600">{item.健保碼}</span></div>}
+                                <div><span className="text-[10px] text-gray-400 block mb-1 uppercase font-black tracking-tighter">規格型號</span><span className="text-xs text-gray-600 break-all">{item.型號}</span></div>
+                                {item.健保碼 && <div><span className="text-[10px] text-gray-400 block mb-1 uppercase font-black tracking-tighter">健保碼</span><span className="text-xs text-gray-600">{item.健保碼}</span></div>}
                               </div>
-                              {item.批價碼 && <div className="pt-2"><span className="text-[10px] text-gray-400 block mb-1 uppercase font-bold">批價碼</span><span className="text-xs text-brand font-medium">{item.批價碼}</span></div>}
+                              {item.批價碼 && <div className="pt-2"><span className="text-[10px] text-gray-400 block mb-1 uppercase font-black tracking-tighter">批價碼</span><span className="text-xs text-brand font-black">{item.批價碼}</span></div>}
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-white border border-earth-border rounded-sm shadow-sm overflow-hidden animate-in fade-in duration-300">
+                      <div className="bg-white border border-earth-border rounded shadow-lg overflow-hidden animate-in fade-in duration-300">
                           <div className="overflow-x-auto">
                               <table className="w-full text-left border-collapse">
-                                  <thead className="bg-[#F0EFEB] border-b-2 border-brand text-gray-800 font-serif font-bold text-xs uppercase tracking-wider">
-                                      <tr><th className="px-5 py-4">醫院名稱</th><th className="px-5 py-4">產品名稱</th><th className="px-5 py-4">型號</th><th className="px-5 py-4 text-center">院內碼</th><th className="px-5 py-4">批價碼</th></tr>
+                                  <thead className="bg-[#F0EFEB] border-b-2 border-brand text-gray-800 font-serif font-bold text-xs uppercase tracking-[0.15em]">
+                                      <tr><th className="px-5 py-5">醫院名稱</th><th className="px-5 py-5">產品名稱</th><th className="px-5 py-5">型號</th><th className="px-5 py-5 text-center">院內碼</th><th className="px-5 py-5">批價碼</th></tr>
                                   </thead>
                                   <tbody className="divide-y divide-earth-border text-[11px] text-gray-600">
                                       {filteredData.map((item, idx) => (
                                           <tr key={idx} className="hover:bg-brand/[0.03] transition-colors">
-                                              <td className="px-5 py-4 text-brand font-bold">{item.醫院名稱}</td>
-                                              <td className="px-5 py-4 font-bold text-gray-700">{item.產品名稱}</td>
-                                              <td className="px-5 py-4 font-mono">{item.型號}</td>
-                                              <td className="px-5 py-4 font-mono font-bold text-center text-gray-800">{item.院內碼}</td>
-                                              <td className="px-5 py-4">{item.批價碼}</td>
+                                              <td className="px-5 py-5 text-brand font-black">{item.醫院名稱}</td>
+                                              <td className="px-5 py-5 font-bold text-gray-700">{item.產品名稱}</td>
+                                              <td className="px-5 py-5 font-mono">{item.型號}</td>
+                                              <td className="px-5 py-5 font-mono font-black text-center text-gray-800">{item.院內碼}</td>
+                                              <td className="px-5 py-5 font-medium">{item.批價碼}</td>
                                           </tr>
                                       ))}
                                   </tbody>
@@ -442,25 +460,36 @@ export default function SearchPage() {
                       </div>
                     )
                 ) : (
-                    <div className="h-64 flex flex-col items-center justify-center opacity-40 grayscale"><Hospital size={80} strokeWidth={0.5} /><div className="text-center mt-6"><h3 className="text-2xl font-serif">NO RESULTS</h3><p className="text-sm font-light">請調整搜尋條件或選擇其他醫院</p></div></div>
+                    <div className="h-64 flex flex-col items-center justify-center opacity-40 grayscale animate-pulse">
+                        <Hospital size={100} strokeWidth={0.3} />
+                        <div className="text-center mt-6">
+                            <h3 className="text-3xl font-serif font-bold">NO RESULTS</h3>
+                            <p className="text-sm font-light mt-2 uppercase tracking-widest text-gray-500">請調整搜尋條件或選擇其他醫院</p>
+                            <button onClick={handleReset} className="mt-6 text-brand font-bold underline text-xs">重置搜尋條件</button>
+                        </div>
+                    </div>
                 )}
               </div>
             ) : (
               /* Welcome 畫面 */
-              <div className="bg-white p-12 md:p-20 border border-earth-border rounded-sm shadow-[0_4px_20px_rgba(0,0,0,0.03)] text-center max-w-4xl mx-auto space-y-10 animate-in fade-in zoom-in-95 duration-1000 relative overflow-hidden">
+              <div className="bg-white p-12 md:p-20 border border-earth-border rounded-lg shadow-[0_10px_40px_rgba(0,0,0,0.05)] text-center max-w-4xl mx-auto space-y-10 animate-in fade-in zoom-in-95 duration-1000 relative overflow-hidden">
                   <div className="absolute top-0 left-0 w-full h-[6px] bg-brand/30" />
                   <div className="space-y-4">
-                      <h2 className="text-3xl font-serif font-bold text-gray-700">Welcome</h2>
+                      <h2 className="text-4xl font-serif font-black text-gray-800 tracking-tight">Welcome</h2>
                       <p className="text-sm font-light leading-relaxed text-gray-500 max-w-md mx-auto">
                           請由左側選單選擇醫院或輸入關鍵字。<br />
                           支援型號、產品名稱與院內碼的複合搜尋。
                       </p>
                   </div>
-                  <hr className="w-16 border-t-2 border-earth-border mx-auto" />
-                  <div className="flex justify-center gap-12 opacity-30">
-                      <div className="flex flex-col items-center gap-2"><Tag size={20} /><span className="text-[10px] items-center uppercase tracking-widest font-bold">Model</span></div>
-                      <div className="flex flex-col items-center gap-2"><ClipboardList size={20} /><span className="text-[10px] items-center uppercase tracking-widest font-bold">Code</span></div>
-                      <div className="flex flex-col items-center gap-2"><Search size={20} /><span className="text-[10px] items-center uppercase tracking-widest font-bold">Search</span></div>
+                  <hr className="w-20 border-t-2 border-brand/20 mx-auto" />
+                  <div className="flex justify-center gap-12 opacity-30 mt-8">
+                      <div className="flex flex-col items-center gap-3"><Tag size={24} /><span className="text-[10px] items-center uppercase tracking-widest font-black">Model</span></div>
+                      <div className="flex flex-col items-center gap-3"><ClipboardList size={24} /><span className="text-[10px] items-center uppercase tracking-widest font-black">Code</span></div>
+                      <div className="flex flex-col items-center gap-3"><Search size={24} /><span className="text-[10px] items-center uppercase tracking-widest font-black">Search</span></div>
+                  </div>
+                  
+                  <div className="pt-10">
+                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-[0.3em]">Authorized Access Only</p>
                   </div>
               </div>
             )}
@@ -468,10 +497,14 @@ export default function SearchPage() {
       </main>
       
       <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #d3d3d3; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #6d8b74; }
+        
+        body {
+            overflow-x: hidden;
+        }
       `}</style>
     </div>
   );
