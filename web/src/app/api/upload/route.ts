@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getRequestContext } from '@cloudflare/next-on-pages';
 
 export const runtime = 'edge';
 
@@ -15,10 +16,23 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: '無效的資料格式' }, { status: 400 });
         }
 
-        const accessKeyId = process.env.ACCESS_KEY;
-        const secretAccessKey = process.env.SECRET_KEY;
-        const endpoint = process.env.ENDPOINT_URL; // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-        const bucketName = process.env.BUCKET_NAME;
+        let accessKeyId = process.env.ACCESS_KEY;
+        let secretAccessKey = process.env.SECRET_KEY;
+        let endpoint = process.env.ENDPOINT_URL; // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+        let bucketName = process.env.BUCKET_NAME;
+
+        // Try getting environment variables from Cloudflare Pages context
+        if (!accessKeyId) {
+            try {
+                const ctx = getRequestContext();
+                accessKeyId = (ctx.env as any).ACCESS_KEY;
+                secretAccessKey = (ctx.env as any).SECRET_KEY;
+                endpoint = (ctx.env as any).ENDPOINT_URL;
+                bucketName = (ctx.env as any).BUCKET_NAME;
+            } catch (e) {
+                // Ignore context error
+            }
+        }
 
         if (!accessKeyId || !secretAccessKey || !endpoint || !bucketName) {
             return NextResponse.json({ 
