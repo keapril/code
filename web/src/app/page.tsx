@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag, LayoutGrid, List, Download, Upload, Loader2, X, Folder } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { useRouter } from 'next/navigation';
 
 // --- 類型定義 ---
 interface MedicalProduct {
@@ -52,6 +53,8 @@ const matchesHospital = (target: string, allowedList: string[]) => {
 };
 
 export default function SearchPage() {
+  const router = useRouter();
+
   const [data, setData] = useState<MedicalProduct[]>([]);
   const [metadata, setMetadata] = useState<Metadata | null>(null);
   const [loading, setLoading] = useState(true);
@@ -70,11 +73,6 @@ export default function SearchPage() {
   const [displayMode, setDisplayMode] = useState<'card' | 'list'>('card');
   const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
   const [hasSearched, setHasSearched] = useState(false);
-
-  // 上傳狀態
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 載入資料
   useEffect(() => {
@@ -184,7 +182,7 @@ export default function SearchPage() {
           setIsAdmin(true);
           setAdminChecked(false);
           setAdminKey("");
-          alert("管理員模式已啟動 (v1.5)");
+          router.push('/admin');
       } else if (key === "163") {
           alert("主管模式暫時停用，進行系統維護中。請輸入 197 進行更新。");
       } else {
@@ -203,25 +201,6 @@ export default function SearchPage() {
       XLSX.utils.book_append_sheet(wb, ws, "院內碼結果");
       if (format === 'xlsx') XLSX.writeFile(wb, `院內碼匯出_${new Date().toISOString().slice(0, 10)}.xlsx`);
       else XLSX.writeFile(wb, `院內碼匯出_${new Date().toISOString().slice(0, 10)}.csv`, { bookType: 'csv' });
-  };
-
-  // 上傳更新
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]; if (!file) return;
-      setUploading(true); setUploadStatus(null);
-      const formData = new FormData(); formData.append('file', file); formData.append('password', '197');
-      try {
-          const res = await fetch('/api/upload', { method: 'POST', body: formData });
-          const result = await res.json();
-          if (res.ok) { 
-              setUploadStatus({ type: 'success', msg: `更新成功！共 ${result.count} 筆資料。` }); 
-              fetchData(); 
-              if (fileInputRef.current) fileInputRef.current.value = ""; 
-          } else {
-              setUploadStatus({ type: 'error', msg: result.error || "上傳失敗" });
-          }
-      } catch (err) { setUploadStatus({ type: 'error', msg: "網路或伺服器連線不可用" }); } 
-      finally { setUploading(false); }
   };
 
   if (loading) return (
@@ -369,20 +348,9 @@ export default function SearchPage() {
              {/* 197 管理員介面 */}
              {isAdmin && (
                   <div className="pt-6 border-t border-earth-border border-dashed space-y-4 animate-in slide-in-from-bottom-4 duration-500">
-                      <div className="flex items-center justify-between">
-                         <label className="text-xs font-black text-brand uppercase tracking-widest flex items-center gap-2"><Upload size={14} /> Data Update (197)</label>
-                      </div>
-                      <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" id="admin-upload-f" disabled={uploading}/>
-                      <label htmlFor="admin-upload-f" className={`w-full py-4 border-2 border-dashed border-brand/30 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-brand/5 shadow-sm transition-all ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
-                         {uploading ? <Loader2 className="animate-spin text-brand" size={20} /> : <Upload className="text-brand" size={20} />}
-                         <span className="text-[10px] text-brand/70 font-black uppercase tracking-tight">Select File (Excel/CSV)</span>
-                      </label>
-                      {uploadStatus && (
-                         <div className={`text-[10px] p-3 rounded shadow-md flex justify-between items-center ${uploadStatus.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                            <span className="font-bold">{uploadStatus.msg}</span>
-                            <button onClick={() => setUploadStatus(null)} className="hover:scale-125 transition-transform"><X size={14} /></button>
-                         </div>
-                      )}
+                      <button onClick={() => router.push('/admin')} className="w-full py-3 bg-brand text-white rounded-lg flex items-center justify-center gap-2 hover:bg-brand/90 transition-all shadow-sm font-bold text-sm tracking-wide">
+                          前往資料庫後台管理 ➜
+                      </button>
                   </div>
              )}
           </div>
