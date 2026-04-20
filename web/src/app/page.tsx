@@ -184,9 +184,9 @@ export default function SearchPage() {
           setAdminKey("");
           router.push('/admin');
       } else if (key === "163") {
-          alert("主管模式暫時停用，進行系統維護中。請輸入 197 進行更新。");
+          alert("主管模式暫時停用，進行系統維護中。請輸入管理員密碼進行更新。");
       } else {
-          alert("密碼無效，請輸入正確的管理員密碼 (197)");
+          alert("密碼無效，請輸入正確的管理員密碼");
       }
   };
 
@@ -243,7 +243,7 @@ export default function SearchPage() {
                   }}
                   className="w-4 h-4 rounded border-gray-300 text-brand focus:ring-brand"
                 />
-                <label htmlFor="admin-check" className="text-sm text-gray-500 cursor-pointer">Admin 登入 (197)</label>
+                <label htmlFor="admin-check" className="text-sm text-gray-500 cursor-pointer">Admin 登入</label>
              </div>
              {(adminChecked && !isAdmin) && (
                  <div className="flex gap-2 animate-in slide-in-from-top-2 duration-300">
@@ -261,7 +261,7 @@ export default function SearchPage() {
              {isAdmin && (
                  <div className="bg-green-600/10 border border-green-600/20 px-3 py-2 rounded flex items-center justify-between animate-in zoom-in-95 shadow-sm">
                      <span className="text-xs text-green-700 font-bold flex items-center gap-1.5">
-                        <ShieldCheck size={14} /> Admin Mode (197)
+                        <ShieldCheck size={14} /> Admin Mode
                      </span>
                      <button onClick={() => { setIsAdmin(false); }} className="text-green-700 hover:scale-110 text-xs font-black transition-transform">退出</button>
                  </div>
