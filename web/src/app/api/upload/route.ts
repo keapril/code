@@ -25,18 +25,24 @@ export async function POST(request: Request) {
         if (!accessKeyId) {
             try {
                 const ctx = getRequestContext();
-                accessKeyId = (ctx.env as any).ACCESS_KEY;
-                secretAccessKey = (ctx.env as any).SECRET_KEY;
-                endpoint = (ctx.env as any).ENDPOINT_URL;
-                bucketName = (ctx.env as any).BUCKET_NAME;
+                accessKeyId = (ctx.env as any).ACCESS_KEY || accessKeyId;
+                secretAccessKey = (ctx.env as any).SECRET_KEY || secretAccessKey;
+                endpoint = (ctx.env as any).ENDPOINT_URL || endpoint;
+                bucketName = (ctx.env as any).BUCKET_NAME || bucketName;
             } catch (e) {
                 // Ignore context error
             }
         }
 
-        if (!accessKeyId || !secretAccessKey || !endpoint || !bucketName) {
+        const missingVars = [];
+        if (!accessKeyId) missingVars.push('ACCESS_KEY');
+        if (!secretAccessKey) missingVars.push('SECRET_KEY');
+        if (!endpoint) missingVars.push('ENDPOINT_URL');
+        if (!bucketName) missingVars.push('BUCKET_NAME');
+
+        if (missingVars.length > 0) {
             return NextResponse.json({ 
-                error: 'R2 環境變數未完全設定，請至 Cloudflare 中設定 ACCESS_KEY, SECRET_KEY, ENDPOINT_URL, BUCKET_NAME' 
+                error: `R2 環境變數遺失: ${missingVars.join(', ')}。請至 Cloudflare -> Pages -> Settings -> Environment Variables 中設定。` 
             }, { status: 500 });
         }
 
