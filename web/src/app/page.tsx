@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag, LayoutGrid, List, Download, Upload, Loader2, X, Folder, ChevronDown, ChevronRight, Layers } from 'lucide-react';
+import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag, Download, Upload, Loader2, X, Folder, ChevronDown, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useRouter } from 'next/navigation';
 
@@ -70,7 +70,6 @@ export default function SearchPage() {
   const [adminKey, setAdminKey] = useState("");
 
   // 顯示控制
-  const [displayMode, setDisplayMode] = useState<'card' | 'accordion'>('card');
   const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
   const [hasSearched, setHasSearched] = useState(false);
   const [expandedHospitals, setExpandedHospitals] = useState<Record<string, boolean>>({});
@@ -385,10 +384,6 @@ export default function SearchPage() {
                        <span className="text-sm font-serif text-gray-500 italic">找到 {filteredData.length} 筆相符資料</span>
                    </div>
                    <div className="flex items-center gap-4">
-                      <div className="flex bg-white border border-earth-border rounded-lg p-1 shadow-sm">
-                          <button onClick={() => setDisplayMode('card')} className={`p-1.5 rounded-md transition-all ${displayMode === 'card' ? 'bg-brand text-white shadow' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={16} /></button>
-                          <button onClick={() => setDisplayMode('accordion')} className={`p-1.5 rounded-md transition-all ${displayMode === 'accordion' ? 'bg-brand text-white shadow' : 'text-gray-400 hover:text-gray-600'}`}><Layers size={16} /></button>
-                      </div>
                       <div className="flex gap-2">
                           <button onClick={() => handleExport('csv')} className="px-3 py-1.5 bg-white border border-earth-border rounded-lg text-[10px] font-black text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5 uppercase">CSV</button>
                           <button onClick={() => handleExport('xlsx')} className="px-3 py-1.5 bg-white border border-earth-border rounded-lg text-[10px] font-black text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5 uppercase">Excel</button>
@@ -397,37 +392,6 @@ export default function SearchPage() {
                 </div>
                 
                 {filteredData.length > 0 ? (
-                    displayMode === 'card' ? (
-                      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                        {filteredData.map((item, idx) => (
-                          <div key={idx} className="bg-white border border-earth-border shadow-sm hover:shadow-xl hover:border-brand/40 transition-all p-8 rounded-xl relative overflow-hidden group">
-                            <div className="absolute top-0 right-0 w-24 h-24 bg-brand/5 rounded-bl-full -mr-8 -mt-8 group-hover:bg-brand/10 transition-colors" />
-                            <div className="flex flex-col gap-6 relative z-10">
-                              <div className="flex justify-between items-start gap-4">
-                                <div className="space-y-2 flex-1">
-                                  <span className="text-[10px] font-black text-brand uppercase tracking-widest bg-brand/10 px-2 py-0.5 rounded-sm">{item.醫院名稱}</span>
-                                  <h3 className="text-2xl font-bold text-gray-800 font-serif leading-tight">{item.產品名稱}</h3>
-                                </div>
-                                <div className="bg-earth-bg px-5 py-3 border border-earth-border rounded-lg shadow-inner text-center min-w-[100px]">
-                                   <span className="text-[9px] text-gray-400 block mb-1 font-black uppercase tracking-widest">Hospital Code</span>
-                                   <span className="text-sm font-mono font-black text-gray-700">{item.院內碼}</span>
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-2 gap-8 pt-6 border-t border-earth-border/40">
-                                <div><span className="text-[10px] text-gray-400 block mb-1.5 uppercase font-black tracking-tighter">Model / Spec</span><span className="text-[13px] text-gray-600 font-medium leading-relaxed break-words">{item.型號}</span></div>
-                                {item.健保碼 && <div><span className="text-[10px] text-gray-400 block mb-1.5 uppercase font-black tracking-tighter">NHI Code</span><span className="text-[13px] text-gray-600 font-medium leading-relaxed">{item.健保碼}</span></div>}
-                              </div>
-                              {item.批價碼 && (
-                                <div className="pt-2">
-                                  <span className="text-[10px] text-gray-400 block mb-1.5 uppercase font-black tracking-tighter">Billing Code</span>
-                                  <span className="text-[13px] text-brand font-black bg-brand/5 px-2 py-1 rounded-sm">{item.批價碼}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
                       <div className="space-y-4">
                           {Array.from(new Set(filteredData.map(i => i.醫院名稱))).sort().map(hospital => {
                               const hospData = filteredData.filter(i => i.醫院名稱 === hospital);
@@ -476,7 +440,6 @@ export default function SearchPage() {
                               );
                           })}
                       </div>
-                    )
                 ) : (
                     <div className="py-24 flex flex-col items-center justify-center opacity-30">
                         <Hospital size={100} strokeWidth={0.5} className="animate-bounce duration-[3000ms]" />
