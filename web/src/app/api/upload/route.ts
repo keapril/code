@@ -16,33 +16,33 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: '無效的資料格式' }, { status: 400 });
         }
 
-        let accessKeyId = process.env.ACCESS_KEY;
-        let secretAccessKey = process.env.SECRET_KEY;
-        let endpoint = process.env.ENDPOINT_URL; // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
-        let bucketName = process.env.BUCKET_NAME;
+        let accessKeyId = process.env.R2_ACCESS_KEY_ID;
+        let secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+        let endpoint = process.env.R2_ENDPOINT_URL; // e.g. https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+        let bucketName = process.env.R2_BUCKET_NAME;
 
         // Try getting environment variables from Cloudflare Pages context
         if (!accessKeyId) {
             try {
                 const ctx = getRequestContext();
-                accessKeyId = (ctx.env as any).ACCESS_KEY || accessKeyId;
-                secretAccessKey = (ctx.env as any).SECRET_KEY || secretAccessKey;
-                endpoint = (ctx.env as any).ENDPOINT_URL || endpoint;
-                bucketName = (ctx.env as any).BUCKET_NAME || bucketName;
+                accessKeyId = (ctx.env as any).R2_ACCESS_KEY_ID || accessKeyId;
+                secretAccessKey = (ctx.env as any).R2_SECRET_ACCESS_KEY || secretAccessKey;
+                endpoint = (ctx.env as any).R2_ENDPOINT_URL || endpoint;
+                bucketName = (ctx.env as any).R2_BUCKET_NAME || bucketName;
             } catch (e) {
                 // Ignore context error
             }
         }
 
         const missingVars = [];
-        if (!accessKeyId) missingVars.push('ACCESS_KEY');
-        if (!secretAccessKey) missingVars.push('SECRET_KEY');
-        if (!endpoint) missingVars.push('ENDPOINT_URL');
-        if (!bucketName) missingVars.push('BUCKET_NAME');
+        if (!accessKeyId) missingVars.push('R2_ACCESS_KEY_ID');
+        if (!secretAccessKey) missingVars.push('R2_SECRET_ACCESS_KEY');
+        if (!endpoint) missingVars.push('R2_ENDPOINT_URL');
+        if (!bucketName) missingVars.push('R2_BUCKET_NAME');
 
         if (missingVars.length > 0) {
             return NextResponse.json({ 
-                error: `R2 環境變數遺失: ${missingVars.join(', ')}。請至 Cloudflare -> Pages -> Settings -> Environment Variables 中設定。` 
+                error: `R2 環境變數遺失: ${missingVars.join(', ')}。請至 Cloudflare 中確認這些變數名稱是否正確設置。` 
             }, { status: 500 });
         }
 
