@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag, LayoutGrid, List, Download, Upload, Loader2, X, Folder } from 'lucide-react';
+import { Search, RotateCcw, ShieldCheck, ListFilter, Hospital, ClipboardList, Tag, LayoutGrid, List, Download, Upload, Loader2, X, Folder, ChevronDown, ChevronRight, Layers } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { useRouter } from 'next/navigation';
 
@@ -70,9 +70,10 @@ export default function SearchPage() {
   const [adminKey, setAdminKey] = useState("");
 
   // 顯示控制
-  const [displayMode, setDisplayMode] = useState<'card' | 'list'>('card');
+  const [displayMode, setDisplayMode] = useState<'card' | 'accordion'>('card');
   const [selectionMode, setSelectionMode] = useState<'single' | 'multiple'>('single');
   const [hasSearched, setHasSearched] = useState(false);
+  const [expandedHospitals, setExpandedHospitals] = useState<Record<string, boolean>>({});
 
   // 載入資料
   useEffect(() => {
@@ -165,6 +166,12 @@ export default function SearchPage() {
   // 手動觸發搜尋 (解決首頁自動跑出院內碼的問題)
   const handleSearchSubmit = () => {
       setHasSearched(true);
+      // 自動展開只有一間醫院時的群組
+      const hospSet = new Set(filteredData.map(d => d.醫院名稱));
+      if (hospSet.size === 1) {
+          const hosp = Array.from(hospSet)[0];
+          setExpandedHospitals({ [hosp]: true });
+      }
   };
 
   // 重置
@@ -380,7 +387,7 @@ export default function SearchPage() {
                    <div className="flex items-center gap-4">
                       <div className="flex bg-white border border-earth-border rounded-lg p-1 shadow-sm">
                           <button onClick={() => setDisplayMode('card')} className={`p-1.5 rounded-md transition-all ${displayMode === 'card' ? 'bg-brand text-white shadow' : 'text-gray-400 hover:text-gray-600'}`}><LayoutGrid size={16} /></button>
-                          <button onClick={() => setDisplayMode('list')} className={`p-1.5 rounded-md transition-all ${displayMode === 'list' ? 'bg-brand text-white shadow' : 'text-gray-400 hover:text-gray-600'}`}><List size={16} /></button>
+                          <button onClick={() => setDisplayMode('accordion')} className={`p-1.5 rounded-md transition-all ${displayMode === 'accordion' ? 'bg-brand text-white shadow' : 'text-gray-400 hover:text-gray-600'}`}><Layers size={16} /></button>
                       </div>
                       <div className="flex gap-2">
                           <button onClick={() => handleExport('csv')} className="px-3 py-1.5 bg-white border border-earth-border rounded-lg text-[10px] font-black text-gray-600 hover:border-brand hover:text-brand transition-all shadow-sm flex items-center gap-1.5 uppercase">CSV</button>
@@ -421,31 +428,53 @@ export default function SearchPage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="bg-white border border-earth-border rounded-xl shadow-xl overflow-hidden">
-                          <div className="overflow-x-auto">
-                              <table className="w-full text-left border-collapse">
-                                  <thead className="bg-[#F0EFEB] border-b-2 border-brand text-gray-800 font-serif font-bold text-[11px] uppercase tracking-widest">
-                                      <tr>
-                                          <th className="px-6 py-5">醫院名稱</th>
-                                          <th className="px-6 py-5">產品名稱</th>
-                                          <th className="px-6 py-5">型號</th>
-                                          <th className="px-6 py-5 text-center">院內碼</th>
-                                          <th className="px-6 py-5">批價碼</th>
-                                      </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-earth-border text-xs text-gray-600">
-                                      {filteredData.map((item, idx) => (
-                                          <tr key={idx} className="hover:bg-brand/[0.04] transition-colors">
-                                              <td className="px-6 py-5 text-brand font-black whitespace-nowrap">{item.醫院名稱}</td>
-                                              <td className="px-6 py-5 font-bold text-gray-800 leading-snug">{item.產品名稱}</td>
-                                              <td className="px-6 py-5 font-mono text-[11px]">{item.型號}</td>
-                                              <td className="px-6 py-5 font-mono font-black text-center text-gray-900">{item.院內碼}</td>
-                                              <td className="px-6 py-5 font-bold">{item.批價碼}</td>
-                                          </tr>
-                                      ))}
-                                  </tbody>
-                              </table>
-                          </div>
+                      <div className="space-y-4">
+                          {Array.from(new Set(filteredData.map(i => i.醫院名稱))).sort().map(hospital => {
+                              const hospData = filteredData.filter(i => i.醫院名稱 === hospital);
+                              const isExpanded = expandedHospitals[hospital];
+                              return (
+                                  <div key={hospital} className="bg-white border border-earth-border rounded-xl shadow-sm overflow-hidden transition-all hover:border-brand/40">
+                                      <div 
+                                          className="px-6 py-4 flex items-center justify-between cursor-pointer hover:bg-[#F9F9F7] transition-colors"
+                                          onClick={() => setExpandedHospitals(prev => ({...prev, [hospital]: !prev[hospital]}))}
+                                      >
+                                          <div className="flex items-center gap-4">
+                                              {isExpanded ? <ChevronDown size={20} className="text-brand" /> : <ChevronRight size={20} className="text-gray-400" />}
+                                              <span className="text-lg font-bold text-gray-800">{hospital}</span>
+                                          </div>
+                                          <div className="flex items-center gap-3">
+                                              <span className="text-xs bg-brand/10 text-brand px-3 py-1 rounded-full font-black tracking-widest">{hospData.length} ITEMS</span>
+                                          </div>
+                                      </div>
+                                      {isExpanded && (
+                                          <div className="border-t border-earth-border/50 bg-[#F0EFEB]/30">
+                                              <div className="overflow-x-auto">
+                                                  <table className="w-full text-left">
+                                                      <thead className="bg-[#F0EFEB] text-gray-500 font-sans font-bold text-[10px] uppercase tracking-widest">
+                                                          <tr>
+                                                              <th className="px-6 py-3 font-semibold">產品名稱</th>
+                                                              <th className="px-6 py-3 font-semibold">型號</th>
+                                                              <th className="px-6 py-3 font-semibold">院內碼</th>
+                                                              <th className="px-6 py-3 font-semibold">批價碼</th>
+                                                          </tr>
+                                                      </thead>
+                                                      <tbody className="divide-y divide-earth-border/50 text-xs text-gray-700">
+                                                          {hospData.map((item, idx) => (
+                                                              <tr key={idx} className="hover:bg-white transition-colors bg-[#F9F9F7]/50">
+                                                                  <td className="px-6 py-4 font-bold text-gray-800">{item.產品名稱}</td>
+                                                                  <td className="px-6 py-4 font-mono text-[11px] text-gray-500">{item.型號}</td>
+                                                                  <td className="px-6 py-4"><span className="font-mono font-black border border-gray-200 bg-white px-2 py-1 rounded shadow-sm">{item.院內碼}</span></td>
+                                                                  <td className="px-6 py-4">{item.批價碼 && <span className="text-brand font-black bg-brand/10 px-2 py-1 rounded-sm">{item.批價碼}</span>}</td>
+                                                              </tr>
+                                                          ))}
+                                                      </tbody>
+                                                  </table>
+                                              </div>
+                                          </div>
+                                      )}
+                                  </div>
+                              );
+                          })}
                       </div>
                     )
                 ) : (
