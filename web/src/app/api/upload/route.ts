@@ -48,10 +48,10 @@ export async function POST(request: Request) {
 
         const client = new S3Client({
             region: 'auto',
-            endpoint: endpoint,
+            endpoint: endpoint as string,
             credentials: {
-                accessKeyId,
-                secretAccessKey,
+                accessKeyId: accessKeyId as string,
+                secretAccessKey: secretAccessKey as string,
             },
         });
 
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
         // 1. 存 JSON 檔
         const jsonContent = JSON.stringify(data);
         await client.send(new PutObjectCommand({
-            Bucket: bucketName,
+            Bucket: bucketName as string,
             Key: R2_JSON_PATH,
             Body: jsonContent,
             ContentType: 'application/json; charset=utf-8'
