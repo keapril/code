@@ -205,7 +205,12 @@ def process_data(df):
                     if v_hosp_str == h_name_str:
                         is_valid = True
                         break
+                    # 雙向包含比對：「白名單 in Excel名稱」或「Excel名稱 in 白名單」
+                    # 後者處理 Excel 短名稱（如「中國安南」）對應白名單長名稱（如「中國安南(祐新/銀鐸)」）
                     if len(v_hosp_str) > 1 and v_hosp_str in h_name_str:
+                        is_valid = True
+                        break
+                    if len(h_name_str) > 1 and h_name_str in v_hosp_str:
                         is_valid = True
                         break
             
@@ -475,7 +480,8 @@ def filter_hospitals(all_hospitals, allow_list):
             continue
 
         for allow in allow_list:
-            if allow == h or allow in h:
+            # 雙向包含比對：讓 Excel 短名稱（如「中國安南」）也能被白名單長名稱（如「中國安南(祐新/銀鐸)」）匹配到
+            if allow == h or allow in h or h in allow:
                 filtered.append(h)
                 break 
     return sorted(list(set(filtered)))
